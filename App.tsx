@@ -400,6 +400,12 @@ const App: React.FC = () => {
     setFiles(prev => prev.map(f => f.path === selectedFilePath ? { ...f, content: newContent } : f));
   };
 
+  // Improved selection handler to auto-switch to code view
+  const handleFileSelect = (path: string) => {
+    setSelectedFilePath(path);
+    setWorkspaceView('code'); // Switch to code view to ensure the user sees the file
+  };
+
   const handleDownload = async () => {
     const zip = new JSZip();
     files.forEach(f => {
@@ -608,7 +614,7 @@ const App: React.FC = () => {
                     <FileExplorer 
                       files={files} 
                       selectedFile={selectedFilePath} 
-                      onSelectFile={setSelectedFilePath} 
+                      onSelectFile={handleFileSelect} 
                     />
                 </div>
 
@@ -646,6 +652,7 @@ const App: React.FC = () => {
                         <div className="flex-1 overflow-hidden relative">
                           {workspaceView === 'code' ? (
                               <CodeEditor 
+                                key={selectedFilePath}
                                 code={selectedFileContent?.content || ''} 
                                 language={selectedFileContent?.language || 'text'} 
                                 onChange={handleUpdateFile} 
