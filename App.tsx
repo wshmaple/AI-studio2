@@ -74,24 +74,21 @@ const App: React.FC = () => {
     localStorage.setItem('ai-studio-messages', JSON.stringify(messages));
   }, [files, messages]);
 
-  // --- LOGIC ---
+  // --- CORE GENERATION LOGIC ---
 
-  const handleSendMessage = async (text: string, images: string[]) => {
-    const userMsgId = Date.now().toString();
-    const newUserMsg: ChatMessage = {
-      id: userMsgId,
-      role: 'user',
-      text,
-      images,
-      timestamp: Date.now()
-    };
-
-    setMessages(prev => [...prev, newUserMsg]);
+  const generateAIResponse = async (
+    currentMessages: ChatMessage[], 
+    userText: string, 
+    userImages: string[],
+    existingFiles: FileData[]
+  ) => {
     setIsLoading(true);
 
-    // --- SMART CANVAS LAYOUT LOGIC ---
+    const aiMsgId = (Date.now() + 1).toString();
+    const userMsgId = currentMessages[currentMessages.length - 1]?.id || 'unknown';
+
+    // --- CANVAS LAYOUT PREP ---
     const NODE_SPACING_Y = 180;
-    const COLUMN_USER = 50;
     const COLUMN_MODEL = 350;
     const COLUMN_ARTIFACTS = 650;
 
@@ -101,15 +98,9 @@ const App: React.FC = () => {
         startY = maxY + NODE_SPACING_Y;
     }
 
-    const userNode: CanvasNode = {
-       id: `msg-${userMsgId}`,
-       type: 'user',
-       x: COLUMN_USER,
-       y: startY,
-       data: { label: 'User Prompt', details: text }
-    };
+    // Note: User node is already added by handleSendMessage or we reuse existing. 
+    // For simplicity in this graph logic, we append new nodes.
     
-    const aiMsgId = (Date.now() + 1).toString();
     const modelNode: CanvasNode = {
         id: `msg-${aiMsgId}`,
         type: 'model',
@@ -118,21 +109,16 @@ const App: React.FC = () => {
         data: { label: 'Model Response', details: 'Thinking...' }
     };
 
-    setNodes(prev => [...prev, userNode, modelNode]);
+    setNodes(prev => [...prev, modelNode]);
+    
+    // Connect to previous user node if possible
+    // We assume the last node was the user node or we find it by ID
+    const userNodeId = `msg-${userMsgId}`;
     setEdges(prev => [...prev, {
         id: `e-${userMsgId}-${aiMsgId}`,
-        source: userNode.id,
+        source: userNodeId,
         target: modelNode.id
     }]);
-
-    const lastModelNode = [...nodes].reverse().find(n => n.type === 'model');
-    if (lastModelNode) {
-        setEdges(prev => [...prev, {
-            id: `e-flow-${lastModelNode.id}-${userNode.id}`,
-            source: lastModelNode.id,
-            target: userNode.id
-        }]);
-    }
 
     const aiMsgPlaceholder: ChatMessage = {
         id: aiMsgId,
@@ -141,19 +127,22 @@ const App: React.FC = () => {
         timestamp: Date.now(),
         thinkingTime: 0
     };
+    
+    // Add placeholder to UI
     setMessages(prev => [...prev, aiMsgPlaceholder]);
 
     try {
       const startTime = Date.now();
-      const historyForApi = messages.map(m => ({
+      // Filter out empty placeholder we just added for the API history
+      const historyForApi = currentMessages.map(m => ({
           role: m.role,
           parts: [{ text: m.text }] 
       }));
 
       const stream = streamResponse(
-        text,
-        images,
-        files,
+        userText,
+        userImages,
+        existingFiles,
         settings,
         historyForApi
       );
@@ -192,6 +181,7 @@ const App: React.FC = () => {
         msg.id === aiMsgId ? { ...msg, thinkingTime: endTime - startTime } : msg
       ));
 
+      // --- POST PROCESSING (TOOLS, FILES) ---
       let artifactOffsetY = 0;
       
       if (groundingMetadata.length > 0) {
@@ -210,7 +200,7 @@ const App: React.FC = () => {
       const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi;
       let match;
       const fileUpdates: FileData[] = [];
-      const currentFilesMap = new Map(files.map(f => [f.path, f]));
+      const currentFilesMap = new Map(existingFiles.map(f => [f.path, f]));
 
       while ((match = fileRegex.exec(fullText)) !== null) {
           const path = match[1];
@@ -237,7 +227,8 @@ const App: React.FC = () => {
       }
 
       if (fileUpdates.length > 0) {
-          setFiles(Array.from(currentFilesMap.values()));
+          const newFiles = Array.from(currentFilesMap.values());
+          setFiles(newFiles);
           setSelectedFilePath(fileUpdates[0].path);
           // Auto open workspace if files are generated
           if (rightPanelMode !== 'GRAPH') {
@@ -257,6 +248,92 @@ const App: React.FC = () => {
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const handleSendMessage = async (text: string, images: string[]) => {
+    const userMsgId = Date.now().toString();
+    const newUserMsg: ChatMessage = {
+      id: userMsgId,
+      role: 'user',
+      text,
+      images,
+      timestamp: Date.now()
+    };
+
+    // Graph node for User
+    const NODE_SPACING_Y = 180;
+    const COLUMN_USER = 50;
+    let startY = 50;
+    if (nodes.length > 0) {
+        const maxY = Math.max(...nodes.map(n => n.y));
+        startY = maxY + NODE_SPACING_Y;
+    }
+    const userNode: CanvasNode = {
+       id: `msg-${userMsgId}`,
+       type: 'user',
+       x: COLUMN_USER,
+       y: startY,
+       data: { label: 'User Prompt', details: text }
+    };
+    
+    // Connect to previous model node if exists
+    const lastModelNode = [...nodes].reverse().find(n => n.type === 'model');
+    if (lastModelNode) {
+        setEdges(prev => [...prev, {
+            id: `e-flow-${lastModelNode.id}-${userNode.id}`,
+            source: lastModelNode.id,
+            target: userNode.id
+        }]);
+    }
+
+    setNodes(prev => [...prev, userNode]);
+    
+    const updatedMessages = [...messages, newUserMsg];
+    setMessages(updatedMessages);
+
+    // Trigger AI
+    await generateAIResponse(updatedMessages, text, images, files);
+  };
+
+  const handleRetry = (modelMsgId: string) => {
+    const index = messages.findIndex(m => m.id === modelMsgId);
+    if (index === -1) return;
+
+    // The message at index is the model response we want to retry.
+    // The message at index - 1 should be the user prompt.
+    const userMsg = messages[index - 1];
+    if (!userMsg || userMsg.role !== 'user') return;
+
+    // Remove the model message from UI
+    const newMessages = messages.slice(0, index);
+    setMessages(newMessages);
+
+    // Also remove the corresponding node from graph to keep it clean (optional but good)
+    setNodes(prev => prev.filter(n => n.id !== `msg-${modelMsgId}`));
+
+    // Re-trigger generation with the EXISTING user message (which is now the last one)
+    generateAIResponse(newMessages, userMsg.text, userMsg.images || [], files);
+  };
+
+  const handleEdit = (modelMsgId: string) => {
+    const index = messages.findIndex(m => m.id === modelMsgId);
+    if (index === -1) return null;
+
+    const userMsg = messages[index - 1];
+    if (!userMsg || userMsg.role !== 'user') return null;
+
+    // Return the text to the ChatInterface
+    const textToEdit = userMsg.text;
+    const imagesToEdit = userMsg.images || [];
+
+    // Remove BOTH the model message and the user message
+    const newMessages = messages.slice(0, index - 1);
+    setMessages(newMessages);
+
+    // Clean up graph nodes for both
+    setNodes(prev => prev.filter(n => n.id !== `msg-${modelMsgId}` && n.id !== `msg-${userMsg.id}`));
+
+    return { text: textToEdit, images: imagesToEdit };
   };
 
   const handleUpdateFile = (newContent: string) => {
@@ -390,6 +467,8 @@ const App: React.FC = () => {
              messages={messages} 
              isLoading={isLoading} 
              onSendMessage={handleSendMessage} 
+             onRetry={handleRetry}
+             onEdit={handleEdit}
            />
            
            {/* Settings Drawer */}

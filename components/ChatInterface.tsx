@@ -1,3 +1,4 @@
+
 import React, { useRef, useEffect, useState } from 'react';
 import { ChatMessage, GroundingMetadata } from '../types';
 import { Send, Image as ImageIcon, Mic, RefreshCw, Pencil, BrainCircuit, Plus, X as XIcon, ChevronDown, ChevronRight, Sparkles, Terminal, Code, BookOpen } from 'lucide-react';
@@ -6,6 +7,8 @@ interface ChatInterfaceProps {
   messages: ChatMessage[];
   isLoading: boolean;
   onSendMessage: (text: string, images: string[]) => void;
+  onRetry?: (messageId: string) => void;
+  onEdit?: (messageId: string) => { text: string; images: string[] } | null;
 }
 
 const QUICK_STARTS = [
@@ -29,7 +32,7 @@ const QUICK_STARTS = [
   }
 ];
 
-const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSendMessage }) => {
+const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSendMessage, onRetry, onEdit }) => {
   const [input, setInput] = useState('');
   const [images, setImages] = useState<string[]>([]); // Base64 strings
   const [isListening, setIsListening] = useState(false);
@@ -48,6 +51,18 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
     setImages([]);
     if (inputRef.current) {
         inputRef.current.style.height = 'auto';
+    }
+  };
+
+  const handleEditClick = (msgId: string) => {
+    if (onEdit) {
+      const result = onEdit(msgId);
+      if (result) {
+        setInput(result.text);
+        setImages(result.images);
+        // Focus input after a short delay
+        setTimeout(() => inputRef.current?.focus(), 100);
+      }
     }
   };
 
@@ -239,8 +254,22 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
                   {msg.role === 'model' && !isModelStreaming && (
                     <div className="flex items-center gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500">
                        {msg.thinkingTime && <span>{(msg.thinkingTime / 1000).toFixed(1)}s</span>}
-                       <button className="hover:text-white flex items-center gap-1"><RefreshCw size={10}/> Retry</button>
-                       <button className="hover:text-white flex items-center gap-1"><Pencil size={10}/> Edit</button>
+                       {onRetry && (
+                         <button 
+                           onClick={() => onRetry(msg.id)}
+                           className="hover:text-white flex items-center gap-1 transition-colors"
+                         >
+                           <RefreshCw size={10}/> Retry
+                         </button>
+                       )}
+                       {onEdit && (
+                         <button 
+                           onClick={() => handleEditClick(msg.id)}
+                           className="hover:text-white flex items-center gap-1 transition-colors"
+                         >
+                           <Pencil size={10}/> Edit
+                         </button>
+                       )}
                     </div>
                   )}
                </div>
