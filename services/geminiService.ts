@@ -1,4 +1,3 @@
-
 import { GoogleGenAI } from "@google/genai";
 import { Settings, FileData } from "../types";
 import { AVAILABLE_MODELS } from "../constants";
@@ -6,10 +5,23 @@ import { AVAILABLE_MODELS } from "../constants";
 // Helper to convert file data to context string
 const buildContextFromFiles = (files: FileData[]): string => {
   if (files.length === 0) return "";
-  let context = "\n\n--- CURRENT PROJECT CONTEXT ---\n";
+  
+  // 1. Build File Tree
+  let context = "--- PROJECT STRUCTURE ---\n";
   files.forEach(f => {
-    context += `File: ${f.path}\n\`\`\`${f.language}\n${f.content}\n\`\`\`\n\n`;
+    context += `- ${f.path} (${f.language})\n`;
   });
+  
+  // 2. Add File Contents (Virtual Filesystem)
+  context += "\n--- CURRENT FILE CONTENTS ---\n";
+  context += "You can edit these files by outputting the full XML block <file path=\"...\">...</file>.\n";
+  
+  files.forEach(f => {
+    // Skip binary or very large files if we had them, to save tokens. 
+    // For now, we assume all are text.
+    context += `\nFile: ${f.path}\n\`\`\`${f.language}\n${f.content}\n\`\`\`\n`;
+  });
+  
   context += "--- END CONTEXT ---\n";
   return context;
 };

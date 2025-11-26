@@ -1,14 +1,15 @@
 import React from 'react';
 import { CanvasNode } from '../types';
-import { X, FileCode, User, Bot, Wrench, Copy } from 'lucide-react';
+import { X, FileCode, User, Bot, Wrench, Copy, History } from 'lucide-react';
 import CodeEditor from './CodeEditor';
 
 interface NodeDetailsProps {
   node: CanvasNode;
   onClose: () => void;
+  onRestore?: () => void; // New prop for navigation
 }
 
-const NodeDetails: React.FC<NodeDetailsProps> = ({ node, onClose }) => {
+const NodeDetails: React.FC<NodeDetailsProps> = ({ node, onClose, onRestore }) => {
   const getIcon = () => {
     switch (node.type) {
       case 'user': return <User size={20} className="text-blue-400" />;
@@ -65,12 +66,25 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({ node, onClose }) => {
       <div className="flex-1 overflow-hidden relative flex flex-col">
          <div className="bg-[#1e1e1e] px-4 py-2 border-b border-[#333] flex justify-between items-center">
              <span className="text-xs font-mono text-gray-500">Raw Content</span>
-             <button 
-                onClick={() => navigator.clipboard.writeText(content)}
-                className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-white bg-[#2a2a2a] px-2 py-1 rounded border border-[#333]"
-             >
-                 <Copy size={10} /> Copy
-             </button>
+             
+             <div className="flex items-center gap-2">
+                 {/* Restore Button for Chat Nodes */}
+                 {(node.type === 'user' || node.type === 'model') && onRestore && (
+                     <button 
+                        onClick={onRestore}
+                        className="flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 hover:bg-blue-900/30 px-2 py-1 rounded border border-blue-900/50"
+                        title="Restore conversation to this point"
+                     >
+                         <History size={10} /> Restore Context
+                     </button>
+                 )}
+                 <button 
+                    onClick={() => navigator.clipboard.writeText(content)}
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-white bg-[#2a2a2a] px-2 py-1 rounded border border-[#333]"
+                 >
+                     <Copy size={10} /> Copy
+                 </button>
+             </div>
          </div>
          <div className="flex-1 relative">
             <CodeEditor 

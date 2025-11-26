@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileData, ChatMessage, Settings, CanvasNode, CanvasEdge,
@@ -94,13 +93,14 @@ const App: React.FC = () => {
     const COLUMN_ARTIFACTS = 650;
 
     let startY = 50;
-    if (nodes.length > 0) {
+    // Find the Y position of the user node we just added/are responding to
+    const existingUserNode = nodes.find(n => n.id === `msg-${userMsgId}`);
+    if (existingUserNode) {
+        startY = existingUserNode.y;
+    } else if (nodes.length > 0) {
         const maxY = Math.max(...nodes.map(n => n.y));
         startY = maxY + NODE_SPACING_Y;
     }
-
-    // Note: User node is already added by handleSendMessage or we reuse existing. 
-    // For simplicity in this graph logic, we append new nodes.
     
     const modelNode: CanvasNode = {
         id: `msg-${aiMsgId}`,
@@ -112,8 +112,7 @@ const App: React.FC = () => {
 
     setNodes(prev => [...prev, modelNode]);
     
-    // Connect to previous user node if possible
-    // We assume the last node was the user node or we find it by ID
+    // Connect to User Node
     const userNodeId = `msg-${userMsgId}`;
     setEdges(prev => [...prev, {
         id: `e-${userMsgId}-${aiMsgId}`,
@@ -262,13 +261,23 @@ const App: React.FC = () => {
     };
 
     // Graph node for User
+    // Position it below the LAST VISIBLE message in the active chain
     const NODE_SPACING_Y = 180;
     const COLUMN_USER = 50;
+    
+    // Find the node corresponding to the last message currently in view
+    const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    const lastNode = lastMsgId ? nodes.find(n => n.id === `msg-${lastMsgId}`) : null;
+    
     let startY = 50;
-    if (nodes.length > 0) {
+    if (lastNode) {
+        startY = lastNode.y + NODE_SPACING_Y;
+    } else if (nodes.length > 0) {
+        // Fallback if we can't find link (e.g. fresh start)
         const maxY = Math.max(...nodes.map(n => n.y));
         startY = maxY + NODE_SPACING_Y;
     }
+
     const userNode: CanvasNode = {
        id: `msg-${userMsgId}`,
        type: 'user',
@@ -277,12 +286,11 @@ const App: React.FC = () => {
        data: { label: 'User Prompt', details: text }
     };
     
-    // Connect to previous model node if exists
-    const lastModelNode = [...nodes].reverse().find(n => n.type === 'model');
-    if (lastModelNode) {
+    // Connect to previous model node if exists in the ACTIVE chain
+    if (lastNode) {
         setEdges(prev => [...prev, {
-            id: `e-flow-${lastModelNode.id}-${userNode.id}`,
-            source: lastModelNode.id,
+            id: `e-flow-${lastNode.id}-${userNode.id}`,
+            source: lastNode.id,
             target: userNode.id
         }]);
     }
@@ -297,22 +305,24 @@ const App: React.FC = () => {
   };
 
   const handleRetry = (modelMsgId: string) => {
+    // 1. Find the message index
     const index = messages.findIndex(m => m.id === modelMsgId);
     if (index === -1) return;
 
-    // The message at index is the model response we want to retry.
-    // The message at index - 1 should be the user prompt.
+    // 2. We do NOT delete the node. We effectively "Branch" history.
+    // The previous user message is at index - 1.
     const userMsg = messages[index - 1];
     if (!userMsg || userMsg.role !== 'user') return;
 
-    // Remove the model message from UI
+    // 3. Reset the UI messages state to exclude the model response we are retrying.
+    // However, the Graph still retains the "abandoned" node.
     const newMessages = messages.slice(0, index);
     setMessages(newMessages);
 
-    // Also remove the corresponding node from graph to keep it clean (optional but good)
-    setNodes(prev => prev.filter(n => n.id !== `msg-${modelMsgId}`));
-
-    // Re-trigger generation with the EXISTING user message (which is now the last one)
+    // 4. Re-generate. This will create a NEW model node in generateAIResponse.
+    // It will connect to the EXISTING user node (since we didn't remove it).
+    // But wait, generateAIResponse creates a NEW edge.
+    // We need to ensure logic allows multiple edges from one user node.
     generateAIResponse(newMessages, userMsg.text, userMsg.images || [], files);
   };
 
@@ -323,18 +333,66 @@ const App: React.FC = () => {
     const userMsg = messages[index - 1];
     if (!userMsg || userMsg.role !== 'user') return null;
 
-    // Return the text to the ChatInterface
+    // Return text to editor
     const textToEdit = userMsg.text;
     const imagesToEdit = userMsg.images || [];
 
-    // Remove BOTH the model message and the user message
+    // "rewind" history before the user message
     const newMessages = messages.slice(0, index - 1);
     setMessages(newMessages);
 
-    // Clean up graph nodes for both
-    setNodes(prev => prev.filter(n => n.id !== `msg-${modelMsgId}` && n.id !== `msg-${userMsg.id}`));
-
+    // We do NOT remove nodes. The user will effectively create a new branch 
+    // starting from the node BEFORE the user message.
     return { text: textToEdit, images: imagesToEdit };
+  };
+
+  // --- NAVIGATION (Time Travel) ---
+  const handleRestoreFromNode = (nodeId: string) => {
+     // This function reconstructs the message history leading up to a specific node.
+     // This is a simplified "Trace Back" logic.
+     
+     if (!nodeId.startsWith('msg-')) return; // Only restore to chat messages
+     const targetMsgId = nodeId.replace('msg-', '');
+     
+     // 1. Find the target node
+     const targetNode = nodes.find(n => n.id === nodeId);
+     if (!targetNode) return;
+
+     // 2. Trace back parents to root
+     const path: string[] = [nodeId];
+     let currentId = nodeId;
+     
+     // Safety counter
+     let steps = 0;
+     while (steps < 100) {
+        const edge = edges.find(e => e.target === currentId);
+        if (!edge) break; // Root reached
+        path.unshift(edge.source);
+        currentId = edge.source;
+        steps++;
+     }
+
+     // 3. Reconstruct Messages from Path
+     const restoredMessages: ChatMessage[] = [];
+     path.forEach(nid => {
+        const n = nodes.find(node => node.id === nid);
+        if (n && n.type !== 'tool' && n.type !== 'file') {
+             // We need to fetch the full message data. 
+             // Ideally we store full msg in node data, but currently we only have label/details.
+             // For high fidelity, we'd need a robust store. 
+             // Fallback: Use the data in 'nodes' to reconstruct a partial message object.
+             const role = n.type === 'user' ? 'user' : 'model';
+             restoredMessages.push({
+                 id: n.id.replace('msg-', ''),
+                 role: role as 'user' | 'model',
+                 text: n.data.details, // Details stores full content
+                 timestamp: Date.now() // Approximate
+             });
+        }
+     });
+
+     setMessages(restoredMessages);
+     setSelectedNode(null);
   };
 
   const handleUpdateFile = (newContent: string) => {
@@ -359,6 +417,8 @@ const App: React.FC = () => {
   const handleLoadLibraryItem = (item: LibraryItem) => {
     setMessages(item.messages);
     setFiles(item.files);
+    setNodes([]); // Clear graph for new session as we don't persist graph in library sample
+    setEdges([]);
     if (item.files.length > 0) {
        setSelectedFilePath(item.files[0].path);
        setRightPanelMode('WORKSPACE');
@@ -511,7 +571,8 @@ const App: React.FC = () => {
                 {selectedNode && (
                     <NodeDetails 
                       node={selectedNode} 
-                      onClose={() => setSelectedNode(null)} 
+                      onClose={() => setSelectedNode(null)}
+                      onRestore={() => handleRestoreFromNode(selectedNode.id)}
                     />
                 )}
               </div>
