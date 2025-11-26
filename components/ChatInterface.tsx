@@ -1,12 +1,33 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { ChatMessage, GroundingMetadata } from '../types';
-import { Send, Image as ImageIcon, Mic, RefreshCw, Pencil, BrainCircuit, Plus, X as XIcon, ChevronDown, ChevronRight } from 'lucide-react';
+import { Send, Image as ImageIcon, Mic, RefreshCw, Pencil, BrainCircuit, Plus, X as XIcon, ChevronDown, ChevronRight, Sparkles, Terminal, Code, BookOpen } from 'lucide-react';
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
   isLoading: boolean;
   onSendMessage: (text: string, images: string[]) => void;
 }
+
+const QUICK_STARTS = [
+  {
+    icon: <Code size={24} className="text-blue-400" />,
+    title: "Web Application",
+    desc: "Create a modern To-Do list with HTML/CSS/JS",
+    prompt: "Create a modern To-Do list app with HTML, CSS, and JS. It should look modern and have a dark mode."
+  },
+  {
+    icon: <Terminal size={24} className="text-green-400" />,
+    title: "Data Analysis",
+    desc: "Python script to analyze CSV data",
+    prompt: "Write a Python script using pandas to analyze a CSV file and visualize the results with matplotlib."
+  },
+  {
+    icon: <BookOpen size={24} className="text-purple-400" />,
+    title: "Creative Writing",
+    desc: "Sci-fi story about a robot gardener",
+    prompt: "Write a short sci-fi story about a robot who loves gardening."
+  }
+];
 
 const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSendMessage }) => {
   const [input, setInput] = useState('');
@@ -149,9 +170,28 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
       {/* Message List */}
       <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-32 scroll-smooth">
         {messages.length === 0 && (
-          <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-50">
-             <div className="w-12 h-12 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-xl mb-4 animate-pulse"></div>
-             <p className="text-sm font-medium">Start prompting</p>
+          <div className="h-full flex flex-col items-center justify-center p-8">
+             <div className="w-16 h-16 bg-gradient-to-br from-blue-600/20 to-purple-600/20 rounded-2xl flex items-center justify-center mb-6 border border-white/5 shadow-inner">
+                <Sparkles size={32} className="text-blue-400" />
+             </div>
+             <h2 className="text-2xl font-semibold text-white mb-2">Welcome to AI Studio</h2>
+             <p className="text-gray-400 mb-10 max-w-md text-center">Start a new creative journey with high-fidelity multi-modal interactions.</p>
+             
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 w-full max-w-4xl">
+                {QUICK_STARTS.map((item, idx) => (
+                   <button 
+                     key={idx}
+                     onClick={() => onSendMessage(item.prompt, [])}
+                     className="flex flex-col items-start p-5 bg-[#1e1e1e] hover:bg-[#252525] border border-[#333] hover:border-blue-500/50 rounded-xl transition-all group text-left"
+                   >
+                      <div className="mb-3 p-2 rounded-lg bg-[#2a2a2a] group-hover:bg-[#333] transition-colors">
+                        {item.icon}
+                      </div>
+                      <span className="text-sm font-medium text-gray-200 mb-1">{item.title}</span>
+                      <span className="text-xs text-gray-500 leading-relaxed">{item.desc}</span>
+                   </button>
+                ))}
+             </div>
           </div>
         )}
         
