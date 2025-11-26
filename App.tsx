@@ -81,27 +81,35 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, newUserMsg]);
     setIsLoading(true);
 
-    // --- CANVAS LAYOUT LOGIC ---
-    // Simple vertical stacking with horizontal branching for Model vs User
-    // Find the lowest Y currently
-    const maxY = nodes.length > 0 ? Math.max(...nodes.map(n => n.y)) : 0;
-    const startY = nodes.length > 0 ? maxY + 150 : 50;
+    // --- SMART CANVAS LAYOUT LOGIC ---
+    // Calculate positions based on previous nodes to prevent overlap
+    const NODE_SPACING_Y = 180;
+    const COLUMN_USER = 50;
+    const COLUMN_MODEL = 350;
+    const COLUMN_ARTIFACTS = 650;
 
-    // Add User Node
+    // Find the bottom-most Y position to start the new interaction turn
+    let startY = 50;
+    if (nodes.length > 0) {
+        const maxY = Math.max(...nodes.map(n => n.y));
+        startY = maxY + NODE_SPACING_Y;
+    }
+
+    // 1. Add User Node
     const userNode: CanvasNode = {
        id: `msg-${userMsgId}`,
        type: 'user',
-       x: 50, // User on left
+       x: COLUMN_USER,
        y: startY,
-       data: { label: 'User Input', details: text }
+       data: { label: 'User Prompt', details: text }
     };
     
-    // Create Placeholder Model Node immediately
+    // 2. Add Model Node (Placeholder)
     const aiMsgId = (Date.now() + 1).toString();
     const modelNode: CanvasNode = {
         id: `msg-${aiMsgId}`,
         type: 'model',
-        x: 300, // Model in middle
+        x: COLUMN_MODEL,
         y: startY, 
         data: { label: 'Model Response', details: 'Thinking...' }
     };
@@ -112,6 +120,16 @@ const App: React.FC = () => {
         source: userNode.id,
         target: modelNode.id
     }]);
+
+    // Connect to previous interaction if exists (visual flow continuity)
+    const lastModelNode = [...nodes].reverse().find(n => n.type === 'model');
+    if (lastModelNode) {
+        setEdges(prev => [...prev, {
+            id: `e-flow-${lastModelNode.id}-${userNode.id}`,
+            source: lastModelNode.id,
+            target: userNode.id
+        }]);
+    }
 
     // Initial placeholder message for streaming
     const aiMsgPlaceholder: ChatMessage = {
@@ -156,14 +174,14 @@ const App: React.FC = () => {
             });
           }
 
-          // Update Message UI
+          // Update Message UI (Streaming)
           setMessages(prev => prev.map(msg => 
              msg.id === aiMsgId 
                ? { ...msg, text: fullText, groundingMetadata: groundingMetadata.length ? groundingMetadata : undefined } 
                : msg
           ));
 
-          // Update Canvas Node UI
+          // Update Canvas Node UI (Streaming)
           setNodes(prev => prev.map(n => 
              n.id === modelNode.id
                ? { ...n, data: { ...n.data, details: fullText } }
@@ -179,27 +197,26 @@ const App: React.FC = () => {
       ));
 
       // --- POST PROCESSING (Files & Tools) ---
+      let artifactOffsetY = 0;
       
       // 1. Tool Nodes (Search)
       if (groundingMetadata.length > 0) {
           const toolNode: CanvasNode = {
               id: `tool-${aiMsgId}`,
               type: 'tool',
-              x: 300,
-              y: startY + 120, 
+              x: COLUMN_ARTIFACTS,
+              y: startY + (artifactOffsetY * 100), 
               data: { label: 'Google Search', details: JSON.stringify(groundingMetadata)}
           };
           setNodes(prev => [...prev, toolNode]);
           setEdges(prev => [...prev, { id: `e-${aiMsgId}-tool`, source: modelNode.id, target: toolNode.id }]);
+          artifactOffsetY++;
       }
 
       // 2. File Parsing & Nodes
-      // Improved regex to handle attributes loosely
       const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi;
       let match;
-      let fileOffset = 0;
       const fileUpdates: FileData[] = [];
-      // Clone current files
       const currentFilesMap = new Map(files.map(f => [f.path, f]));
 
       while ((match = fileRegex.exec(fullText)) !== null) {
@@ -211,24 +228,23 @@ const App: React.FC = () => {
           currentFilesMap.set(path, {path, content, language});
 
           const fileNode: CanvasNode = {
-            id: `file-${aiMsgId}-${fileOffset}`,
+            id: `file-${aiMsgId}-${artifactOffsetY}`,
             type: 'file',
-            x: 550, // Files on right
-            y: startY + (fileOffset * 100),
+            x: COLUMN_ARTIFACTS,
+            y: startY + (artifactOffsetY * 120), // More spacing for files
             data: { label: path, details: content }
           };
           setNodes(prev => [...prev, fileNode]);
           setEdges(prev => [...prev, {
-              id: `e-${aiMsgId}-file-${fileOffset}`,
+              id: `e-${aiMsgId}-file-${artifactOffsetY}`,
               source: modelNode.id,
               target: fileNode.id
           }]);
-          fileOffset++;
+          artifactOffsetY++;
       }
 
       if (fileUpdates.length > 0) {
           setFiles(Array.from(currentFilesMap.values()));
-          // Automatically switch to the first modified file
           setSelectedFilePath(fileUpdates[0].path);
       }
 

@@ -92,48 +92,50 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
     }
     // Remaining text
     if (lastIndex < text.length) {
-        parts.push({ type: 'text', content: text.substring(lastIndex) });
+        // Check for partial open tag if streaming
+        const remaining = text.substring(lastIndex);
+        if (remaining.includes('<think>') && !remaining.includes('</think>')) {
+             const [pre, post] = remaining.split('<think>');
+             if (pre) parts.push({ type: 'text', content: pre });
+             parts.push({ type: 'think', content: post, partial: true });
+        } else {
+             parts.push({ type: 'text', content: remaining });
+        }
     }
     
-    // If no match but text contains opening <think> (streaming case partial)
-    if (parts.length === 0 && text.includes('<think>') && !text.includes('</think>')) {
-       const [pre, think] = text.split('<think>');
-       if (pre) parts.push({ type: 'text', content: pre });
-       parts.push({ type: 'think', content: think, partial: true });
-    } else if (parts.length === 0) {
-       parts.push({ type: 'text', content: text });
-    }
-
     return (
       <div className="prose prose-invert max-w-none text-sm leading-relaxed text-gray-200">
         {parts.map((part, idx) => {
            if (part.type === 'think') {
               return (
-                <details key={idx} open className="group mb-4">
-                  <summary className="flex items-center gap-2 cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-300 list-none mb-1 select-none">
-                     <div className="flex items-center gap-1 transition-transform group-open:rotate-90">
-                        <ChevronRight size={12} />
-                     </div>
-                     <BrainCircuit size={14} className="text-purple-400" />
-                     <span>Thought Process</span>
-                     {part.partial && <span className="animate-pulse">...</span>}
-                  </summary>
-                  <div className="pl-4 border-l-2 border-[#333] text-gray-400 text-xs font-mono whitespace-pre-wrap py-2 bg-[#1a1a1a]/50 rounded-r">
-                    {part.content}
-                  </div>
-                </details>
+                <div key={idx} className="mb-4">
+                  <details open className="group bg-[#1a1a1a] rounded-lg border border-[#333] overflow-hidden">
+                    <summary className="flex items-center gap-2 cursor-pointer p-2 bg-[#252525] text-xs font-medium text-gray-400 hover:text-gray-200 select-none transition-colors">
+                       <div className="flex items-center gap-1 transition-transform group-open:rotate-90">
+                          <ChevronRight size={12} />
+                       </div>
+                       <BrainCircuit size={14} className="text-purple-400" />
+                       <span>Thinking Process</span>
+                       {part.partial && <span className="animate-pulse ml-2 text-purple-400/70">Generating thought...</span>}
+                    </summary>
+                    <div className="p-3 text-gray-400 text-xs font-mono whitespace-pre-wrap leading-relaxed border-t border-[#333]">
+                      {part.content}
+                    </div>
+                  </details>
+                </div>
               );
            }
+           
            // Cleanup file tags for chat view
            const cleanText = part.content.replace(/<file\s+path=["']([^"']+)["'][^>]*>[\s\S]*?<\/file>/gi, (match, path) => {
-               return `\n[Generated file: ${path}]\n`;
+               return `\n\n[Generated file: ${path}]\n\n`;
            });
            
            return (
-             <div key={idx} className="whitespace-pre-wrap">
+             <div key={idx} className="whitespace-pre-wrap inline">
                {cleanText}
                {isStreaming && idx === parts.length - 1 && (
-                 <span className="inline-block w-1.5 h-4 bg-blue-500 ml-0.5 animate-pulse align-middle"></span>
+                 <span className="inline-block w-2 h-4 bg-blue-500 ml-1 animate-pulse align-middle rounded-sm shadow-[0_0_8px_rgba(59,130,246,0.5)]"></span>
                )}
              </div>
            );
@@ -145,7 +147,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
   return (
     <div className="flex flex-col h-full bg-[#13161c] relative">
       {/* Message List */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-32">
+      <div className="flex-1 overflow-y-auto p-6 space-y-8 pb-32 scroll-smooth">
         {messages.length === 0 && (
           <div className="h-full flex flex-col items-center justify-center text-gray-500 opacity-50">
              <div className="w-12 h-12 bg-gradient-to-tr from-blue-500 to-purple-500 rounded-xl mb-4 animate-pulse"></div>
@@ -178,15 +180,16 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
                     </div>
                   )}
 
-                  <div className="text-sm">
+                  <div className="text-sm leading-relaxed">
                      {renderContent(msg.text, isModelStreaming)}
                   </div>
                   
                   {msg.groundingMetadata && msg.groundingMetadata.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
                        {msg.groundingMetadata.map((g, idx) => (
-                         <a key={idx} href={g.url} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1 bg-[#1e1e1e] px-2 py-1 rounded-full text-blue-400 hover:text-blue-300 border border-[#333]">
-                           <span className="truncate max-w-[150px]">{g.title}</span>
+                         <a key={idx} href={g.url} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1.5 bg-[#1e1e1e] px-2 py-1.5 rounded-md text-blue-400 hover:text-blue-300 hover:bg-[#252525] border border-[#333] transition-colors">
+                           <div className="w-1 h-1 rounded-full bg-blue-500"></div>
+                           <span className="truncate max-w-[200px]">{g.title}</span>
                          </a>
                        ))}
                     </div>
@@ -225,7 +228,7 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
           </div>
         )}
         
-        <div className="bg-[#1e1e1e] rounded-xl border border-[#333] flex flex-col focus-within:border-gray-600 transition-colors shadow-lg">
+        <div className="bg-[#1e1e1e] rounded-xl border border-[#333] flex flex-col focus-within:border-gray-600 transition-colors shadow-2xl">
            <textarea
              ref={inputRef}
              value={input}

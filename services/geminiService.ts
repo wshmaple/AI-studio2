@@ -24,9 +24,13 @@ export const streamResponse = async function* (
   
   // Construct model name.
   let modelName = settings.model;
-  // Handle alias mapping if strictly needed, though mapped in constants usually
+  let thinkingConfig = undefined;
+
+  // Handle alias mapping for Thinking model
   if (modelName === 'gemini-2.5-flash-thinking') {
     modelName = 'gemini-2.5-flash'; 
+    // Enable thinking with a default budget if user selected the thinking variant
+    thinkingConfig = { thinkingBudget: 8192 }; 
   }
 
   // Build tools config
@@ -68,7 +72,8 @@ export const streamResponse = async function* (
         topP: settings.topP,
         topK: settings.topK,
         maxOutputTokens: settings.maxOutputTokens,
-        tools: tools.length > 0 ? tools : undefined
+        tools: tools.length > 0 ? tools : undefined,
+        thinkingConfig: thinkingConfig
       }
     });
 
