@@ -1,6 +1,6 @@
 import React from 'react';
 import { CanvasNode } from '../types';
-import { X, FileCode, User, Bot, Wrench, Copy, History } from 'lucide-react';
+import { X, FileCode, User, Bot, Wrench, Copy, RotateCcw } from 'lucide-react';
 import CodeEditor from './CodeEditor';
 
 interface NodeDetailsProps {
@@ -72,17 +72,17 @@ const NodeDetails: React.FC<NodeDetailsProps> = ({ node, onClose, onRestore }) =
                  {(node.type === 'user' || node.type === 'model') && onRestore && (
                      <button 
                         onClick={onRestore}
-                        className="flex items-center gap-1.5 text-[10px] text-blue-400 hover:text-blue-300 bg-blue-900/20 hover:bg-blue-900/30 px-2 py-1 rounded border border-blue-900/50"
-                        title="Restore conversation to this point"
+                        className="flex items-center gap-1.5 text-[10px] font-medium text-white bg-blue-600 hover:bg-blue-500 px-3 py-1.5 rounded-md shadow-sm transition-colors"
+                        title="Restore conversation state to this point"
                      >
-                         <History size={10} /> Restore Context
+                         <RotateCcw size={12} /> Restore Here
                      </button>
                  )}
                  <button 
                     onClick={() => navigator.clipboard.writeText(content)}
-                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-white bg-[#2a2a2a] px-2 py-1 rounded border border-[#333]"
+                    className="flex items-center gap-1.5 text-[10px] text-gray-400 hover:text-white bg-[#2a2a2a] px-2 py-1.5 rounded border border-[#333] hover:border-gray-500 transition-colors"
                  >
-                     <Copy size={10} /> Copy
+                     <Copy size={12} /> Copy
                  </button>
              </div>
          </div>

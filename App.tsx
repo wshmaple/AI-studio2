@@ -18,7 +18,8 @@ import NodeDetails from './components/NodeDetails';
 import { 
   Settings as SettingsIcon, Play, 
   MessageSquare, Plus, 
-  Code2, Eye, GitGraph, Box, Download, Trash2, X as CloseIcon
+  Code2, Eye, GitGraph, Box, Download, Trash2, X as CloseIcon,
+  PanelLeft
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -45,6 +46,7 @@ const App: React.FC = () => {
   const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
   // Workspace Tab State (Code vs Preview)
   const [workspaceView, setWorkspaceView] = useState<'code' | 'preview'>('preview');
@@ -348,23 +350,17 @@ const App: React.FC = () => {
 
   // --- NAVIGATION (Time Travel) ---
   const handleRestoreFromNode = (nodeId: string) => {
-     // This function reconstructs the message history leading up to a specific node.
-     // This is a simplified "Trace Back" logic.
+     // This function reconstructs the message history AND file state leading up to a specific node.
      
      if (!nodeId.startsWith('msg-')) return; // Only restore to chat messages
-     const targetMsgId = nodeId.replace('msg-', '');
      
-     // 1. Find the target node
-     const targetNode = nodes.find(n => n.id === nodeId);
-     if (!targetNode) return;
-
-     // 2. Trace back parents to root
+     // 1. Trace back parents to root to build the "Timeline"
      const path: string[] = [nodeId];
      let currentId = nodeId;
      
      // Safety counter
      let steps = 0;
-     while (steps < 100) {
+     while (steps < 200) {
         const edge = edges.find(e => e.target === currentId);
         if (!edge) break; // Root reached
         path.unshift(edge.source);
@@ -372,26 +368,54 @@ const App: React.FC = () => {
         steps++;
      }
 
-     // 3. Reconstruct Messages from Path
+     // 2. Reconstruct Messages from Path
      const restoredMessages: ChatMessage[] = [];
+     
+     // 3. Reconstruct File State
+     // We start from INITIAL_FILES and apply changes found in Model nodes along the path
+     const reconstructedFilesMap = new Map(INITIAL_FILES.map(f => [f.path, f]));
+
      path.forEach(nid => {
         const n = nodes.find(node => node.id === nid);
-        if (n && n.type !== 'tool' && n.type !== 'file') {
-             // We need to fetch the full message data. 
-             // Ideally we store full msg in node data, but currently we only have label/details.
-             // For high fidelity, we'd need a robust store. 
-             // Fallback: Use the data in 'nodes' to reconstruct a partial message object.
+        if (n && (n.type === 'user' || n.type === 'model')) {
+             // Rebuild Message
              const role = n.type === 'user' ? 'user' : 'model';
+             const text = n.data.details;
+             
              restoredMessages.push({
                  id: n.id.replace('msg-', ''),
                  role: role as 'user' | 'model',
-                 text: n.data.details, // Details stores full content
+                 text: text,
                  timestamp: Date.now() // Approximate
              });
+
+             // If it's a model message, re-apply any file changes contained in it
+             if (role === 'model') {
+                 const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi;
+                 let match;
+                 while ((match = fileRegex.exec(text)) !== null) {
+                     const path = match[1];
+                     const content = match[2].trim();
+                     const language = path.split('.').pop() || 'text';
+                     reconstructedFilesMap.set(path, { path, content, language });
+                 }
+             }
         }
      });
 
      setMessages(restoredMessages);
+     setFiles(Array.from(reconstructedFilesMap.values()));
+     
+     // If files exist, select the first one, otherwise null
+     if (reconstructedFilesMap.size > 0) {
+         // Try to keep selection if possible, else select first
+         if (!selectedFilePath || !reconstructedFilesMap.has(selectedFilePath)) {
+             setSelectedFilePath(Array.from(reconstructedFilesMap.keys())[0]);
+         }
+     } else {
+         setSelectedFilePath(null);
+     }
+
      setSelectedNode(null);
   };
 
@@ -449,7 +473,7 @@ const App: React.FC = () => {
     <div className="flex h-screen w-screen bg-[#0b0f13] text-[#e0e0e0] overflow-hidden font-sans">
       
       {/* 1. LEFT SIDEBAR: Library & Navigation */}
-      <div className="w-60 flex-shrink-0 flex flex-col border-r border-[#1e1e1e] bg-[#0b0f13] hidden md:flex">
+      <div className={`${isSidebarOpen ? 'w-60 opacity-100' : 'w-0 opacity-0 overflow-hidden'} transition-all duration-300 flex-shrink-0 flex flex-col border-r border-[#1e1e1e] bg-[#0b0f13] md:flex`}>
         <div className="h-14 flex items-center px-4 gap-2">
            <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-md"></div>
            <span className="font-semibold text-lg tracking-tight text-white">AI Studio</span>
@@ -493,8 +517,17 @@ const App: React.FC = () => {
       {/* 2. MIDDLE PANEL: Chat / Prompt Interface */}
       <div className="flex-1 flex flex-col min-w-0 border-r border-[#1e1e1e] bg-[#13161c] relative transition-all duration-300">
         {/* Header */}
-        <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-6 bg-[#13161c]">
-           <span className="text-sm font-medium text-gray-300 truncate mr-4">Untitled prompt</span>
+        <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-4 bg-[#13161c]">
+           <div className="flex items-center gap-3">
+              <button 
+                onClick={() => setIsSidebarOpen(!isSidebarOpen)} 
+                className="text-gray-500 hover:text-white transition-colors"
+                title="Toggle Sidebar"
+              >
+                 <PanelLeft size={20} />
+              </button>
+              <span className="text-sm font-medium text-gray-300 truncate mr-4">Untitled prompt</span>
+           </div>
            
            <div className="flex items-center gap-4 flex-shrink-0">
               {/* Top View Toggle */}
