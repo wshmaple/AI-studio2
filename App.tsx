@@ -13,6 +13,7 @@ import CodeEditor from './components/CodeEditor';
 import PreviewPane from './components/PreviewPane';
 import FlowCanvas from './components/FlowCanvas';
 import SettingsPanel from './components/SettingsPanel';
+import NodeDetails from './components/NodeDetails';
 
 import { 
   Settings as SettingsIcon, Play, 
@@ -49,6 +50,7 @@ const App: React.FC = () => {
   // Canvas State
   const [nodes, setNodes] = useState<CanvasNode[]>([]);
   const [edges, setEdges] = useState<CanvasEdge[]>([]);
+  const [selectedNode, setSelectedNode] = useState<CanvasNode | null>(null);
 
   // Load state from local storage on mount
   useEffect(() => {
@@ -87,13 +89,26 @@ const App: React.FC = () => {
 
       // Create a node for this file update
       const fileNodeId = `file-${Date.now()}-${path}`;
-      setNodes(prev => [...prev, {
-        id: fileNodeId,
-        type: 'file',
-        x: 600,
-        y: prev.length * 100 + 50,
-        data: { label: path, details: content }
-      }]);
+      setNodes(prev => {
+        const lastNode = prev[prev.length - 1];
+        const newX = lastNode ? lastNode.x + 250 : 50;
+        const newY = lastNode ? lastNode.y : 50;
+
+        const newNode: CanvasNode = {
+           id: fileNodeId,
+           type: 'file',
+           x: newX,
+           y: newY,
+           data: { label: path, details: content }
+        };
+
+        // Edge from last model node to this file
+        // This is a simplification. Ideally we track parent ID.
+        return [...prev, newNode];
+      });
+      
+      // We need to add edges in a separate step or track the 'source' node better. 
+      // For this replica, visual approximation is acceptable.
     }
 
     if (newFiles.length > 0) {
@@ -118,16 +133,23 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, newUserMsg]);
     setIsLoading(true);
 
+    // Calculate position for new nodes
+    // Simple layout: User nodes on left, Model nodes on right, progressing downwards
+    const lastY = nodes.length > 0 ? nodes[nodes.length - 1].y : 0;
+    const newY = lastY + 120;
+
     // Add User Node
-    const userNodeY = nodes.length * 80;
     const userNode: CanvasNode = {
        id: `msg-${userMsgId}`,
        type: 'user',
        x: 50,
-       y: userNodeY,
+       y: newY,
        data: { label: 'User Input', details: text }
     };
     setNodes(prev => [...prev, userNode]);
+
+    // Link from previous model node if exists
+    // (Skipped for simplicity, usually you link strictly)
 
     try {
       const startTime = Date.now();
@@ -147,32 +169,18 @@ const App: React.FC = () => {
 
       const endTime = Date.now();
       
-      // Parse for files
-      parseAndApplyFiles(responseText);
-
-      const aiMsgId = (Date.now() + 1).toString();
-      const newAiMsg: ChatMessage = {
-        id: aiMsgId,
-        role: 'model',
-        text: responseText,
-        timestamp: Date.now(),
-        thinkingTime: endTime - startTime,
-        groundingMetadata
-      };
-      
-      setMessages(prev => [...prev, newAiMsg]);
-
       // Add Model Node
+      const aiMsgId = (Date.now() + 1).toString();
       const modelNode: CanvasNode = {
         id: `msg-${aiMsgId}`,
         type: 'model',
-        x: 300,
-        y: userNodeY, // align horizontally roughly
+        x: 350,
+        y: newY, 
         data: { label: 'Model Response', details: responseText }
       };
       setNodes(prev => [...prev, modelNode]);
 
-      // Add Edge
+      // Add Edge User -> Model
       setEdges(prev => [...prev, {
         id: `e-${userMsgId}-${aiMsgId}`,
         source: userNode.id,
@@ -183,13 +191,62 @@ const App: React.FC = () => {
           const toolNode: CanvasNode = {
               id: `tool-${aiMsgId}`,
               type: 'tool',
-              x: 300,
-              y: userNodeY + 80,
+              x: 350,
+              y: newY + 120, // below model node
               data: { label: 'Google Search', details: JSON.stringify(groundingMetadata)}
           };
           setNodes(prev => [...prev, toolNode]);
           setEdges(prev => [...prev, { id: `e-${aiMsgId}-tool`, source: modelNode.id, target: toolNode.id }]);
       }
+
+      // Parse for files (this will add file nodes inside the function logic ideally, 
+      // but for cleaner state we might need to refactor. 
+      // For now, let's just parse files and manually add file nodes here for better graph layout control)
+      
+      const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
+      let match;
+      let fileOffset = 0;
+      const fileUpdates: FileData[] = [];
+      const currentFilesMap = new Map(files.map(f => [f.path, f]));
+
+      while ((match = fileRegex.exec(responseText)) !== null) {
+          const path = match[1];
+          const content = match[2].trim();
+          const language = path.split('.').pop() || 'text';
+          
+          fileUpdates.push({path, content, language});
+          currentFilesMap.set(path, {path, content, language});
+
+          const fileNode: CanvasNode = {
+            id: `file-${aiMsgId}-${fileOffset}`,
+            type: 'file',
+            x: 650,
+            y: newY + (fileOffset * 100),
+            data: { label: path, details: content }
+          };
+          setNodes(prev => [...prev, fileNode]);
+          setEdges(prev => [...prev, {
+              id: `e-${aiMsgId}-file-${fileOffset}`,
+              source: modelNode.id,
+              target: fileNode.id
+          }]);
+          fileOffset++;
+      }
+
+      if (fileUpdates.length > 0) {
+          setFiles(Array.from(currentFilesMap.values()));
+          setSelectedFilePath(fileUpdates[0].path);
+      }
+      
+      const newAiMsg: ChatMessage = {
+        id: aiMsgId,
+        role: 'model',
+        text: responseText,
+        timestamp: Date.now(),
+        thinkingTime: endTime - startTime,
+        groundingMetadata
+      };
+      setMessages(prev => [...prev, newAiMsg]);
 
     } catch (error) {
       console.error(error);
@@ -323,12 +380,24 @@ const App: React.FC = () => {
 
       {/* 3. RIGHT PANEL: Project Workspace / Graph */}
       {rightPanelMode === 'GRAPH' ? (
-        <div className="w-[45%] bg-[#0b0f13] flex flex-col">
+        <div className="w-[45%] bg-[#0b0f13] flex flex-col relative overflow-hidden">
            <div className="h-14 border-b border-[#1e1e1e] flex items-center px-4 bg-[#0b0f13]">
               <span className="font-semibold text-sm">Agent Execution Graph</span>
            </div>
-           <div className="flex-1">
-             <FlowCanvas nodes={nodes} edges={edges} />
+           <div className="flex-1 relative">
+             <FlowCanvas 
+                nodes={nodes} 
+                edges={edges} 
+                onNodeClick={(node) => setSelectedNode(node)} 
+             />
+             
+             {/* Node Details Overlay */}
+             {selectedNode && (
+                <NodeDetails 
+                   node={selectedNode} 
+                   onClose={() => setSelectedNode(null)} 
+                />
+             )}
            </div>
         </div>
       ) : (
