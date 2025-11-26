@@ -1,4 +1,4 @@
-import { GoogleGenAI, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 import { Settings, FileData } from "../types";
 
 // Helper to convert file data to context string
@@ -12,20 +12,21 @@ const buildContextFromFiles = (files: FileData[]): string => {
   return context;
 };
 
-export const generateResponse = async (
+export const streamResponse = async function* (
   prompt: string,
   images: string[],
   files: FileData[],
   settings: Settings,
   history: { role: string; parts: { text: string }[] }[]
-): Promise<{ text: string; groundingMetadata: any[]; }> => {
+) {
   
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
-  // Construct model name. Handle custom logic if needed for specific aliases
+  // Construct model name.
   let modelName = settings.model;
+  // Handle alias mapping if strictly needed, though mapped in constants usually
   if (modelName === 'gemini-2.5-flash-thinking') {
-    modelName = 'gemini-2.5-flash'; // Use flash but we might interpret thinking differently in UI
+    modelName = 'gemini-2.5-flash'; 
   }
 
   // Build tools config
@@ -54,14 +55,8 @@ export const generateResponse = async (
 
   parts.push({ text: fullPrompt });
 
-  // Map history to proper format
-  // Note: For simplicity in this demo, we might just use generateContent with system instruction
-  // For full chat history, we'd use ai.chats.create, but generateContent allows stateless flexibility here
-  // with manual history injection if we wanted strict multi-turn.
-  // We will simply simulate history by prepending for this "Replica" to keep state simple.
-
   try {
-    const response = await ai.models.generateContent({
+    const responseStream = await ai.models.generateContentStream({
       model: modelName,
       contents: {
         role: 'user',
@@ -77,21 +72,9 @@ export const generateResponse = async (
       }
     });
 
-    // Extract text
-    const text = response.text || "";
-    
-    // Extract grounding
-    let groundingMetadata: any[] = [];
-    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
-    if (chunks) {
-        chunks.forEach((c: any) => {
-            if (c.web?.uri) {
-                groundingMetadata.push({ url: c.web.uri, title: c.web.title || c.web.uri });
-            }
-        });
+    for await (const chunk of responseStream) {
+      yield chunk;
     }
-
-    return { text, groundingMetadata };
 
   } catch (error) {
     console.error("Gemini API Error:", error);

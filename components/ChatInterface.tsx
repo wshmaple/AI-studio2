@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { ChatMessage, GroundingMetadata } from '../types';
-import { Send, Image as ImageIcon, Mic, RefreshCw, Pencil, BrainCircuit, Plus, X as XIcon } from 'lucide-react';
+import { Send, Image as ImageIcon, Mic, RefreshCw, Pencil, BrainCircuit, Plus, X as XIcon, ChevronDown, ChevronRight } from 'lucide-react';
 
 interface ChatInterfaceProps {
   messages: ChatMessage[];
@@ -15,10 +15,10 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
-  // Auto scroll
+  // Auto scroll logic: only auto-scroll if user is near bottom
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, isLoading]);
+  }, [messages.length, messages[messages.length-1]?.text]);
 
   const handleSend = () => {
     if (!input.trim() && images.length === 0) return;
@@ -50,63 +50,94 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
     }
   };
 
-  // Voice Input (Web Speech API)
+  // Voice Input
   const toggleListening = () => {
     if (isListening) {
       setIsListening(false);
       return;
     }
-    
-    // Check compatibility
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SpeechRecognition) {
       alert("Browser does not support speech recognition.");
       return;
     }
-
     const recognition = new SpeechRecognition();
     recognition.continuous = false;
     recognition.interimResults = false;
     recognition.lang = 'en-US';
-
     recognition.onstart = () => setIsListening(true);
     recognition.onend = () => setIsListening(false);
     recognition.onresult = (event: any) => {
       const transcript = event.results[0][0].transcript;
       setInput(prev => prev + " " + transcript);
     };
-
     recognition.start();
   };
 
-  const renderContent = (text: string) => {
-    // Basic formatting for the chat
-    // If thinking model, check for <think> tags
-    const thinkMatch = text.match(/<think>([\s\S]*?)<\/think>/);
-    let mainContent = text;
-    let thinkingContent = null;
+  const renderContent = (text: string, isStreaming: boolean) => {
+    // Regex for <think> tags
+    const thinkRegex = /<think>([\s\S]*?)<\/think>/g;
+    const parts = [];
+    let lastIndex = 0;
+    let match;
 
-    if (thinkMatch) {
-      thinkingContent = thinkMatch[1];
-      mainContent = text.replace(/<think>[\s\S]*?<\/think>/, '').trim();
+    while ((match = thinkRegex.exec(text)) !== null) {
+        // Text before the think block
+        if (match.index > lastIndex) {
+            parts.push({ type: 'text', content: text.substring(lastIndex, match.index) });
+        }
+        // The think block
+        parts.push({ type: 'think', content: match[1] });
+        lastIndex = thinkRegex.lastIndex;
     }
-
-    // Strip <file> tags for cleaner chat view, as they appear in the file explorer
-    const cleanContent = mainContent.replace(/<file\s+path="[^"]+">[\s\S]*?<\/file>/g, '[File generated, see Workspace]');
+    // Remaining text
+    if (lastIndex < text.length) {
+        parts.push({ type: 'text', content: text.substring(lastIndex) });
+    }
+    
+    // If no match but text contains opening <think> (streaming case partial)
+    if (parts.length === 0 && text.includes('<think>') && !text.includes('</think>')) {
+       const [pre, think] = text.split('<think>');
+       if (pre) parts.push({ type: 'text', content: pre });
+       parts.push({ type: 'think', content: think, partial: true });
+    } else if (parts.length === 0) {
+       parts.push({ type: 'text', content: text });
+    }
 
     return (
       <div className="prose prose-invert max-w-none text-sm leading-relaxed text-gray-200">
-        {thinkingContent && (
-           <details className="mb-4 bg-[#1a1a1a] p-3 rounded border border-[#333] text-gray-400">
-             <summary className="cursor-pointer font-mono text-xs flex items-center gap-2 hover:text-white">
-               <BrainCircuit size={14} /> Chain of Thought
-             </summary>
-             <div className="mt-2 text-xs font-mono whitespace-pre-wrap pl-4 border-l-2 border-gray-600">
-               {thinkingContent}
+        {parts.map((part, idx) => {
+           if (part.type === 'think') {
+              return (
+                <details key={idx} open className="group mb-4">
+                  <summary className="flex items-center gap-2 cursor-pointer text-xs font-medium text-gray-500 hover:text-gray-300 list-none mb-1 select-none">
+                     <div className="flex items-center gap-1 transition-transform group-open:rotate-90">
+                        <ChevronRight size={12} />
+                     </div>
+                     <BrainCircuit size={14} className="text-purple-400" />
+                     <span>Thought Process</span>
+                     {part.partial && <span className="animate-pulse">...</span>}
+                  </summary>
+                  <div className="pl-4 border-l-2 border-[#333] text-gray-400 text-xs font-mono whitespace-pre-wrap py-2 bg-[#1a1a1a]/50 rounded-r">
+                    {part.content}
+                  </div>
+                </details>
+              );
+           }
+           // Cleanup file tags for chat view
+           const cleanText = part.content.replace(/<file\s+path=["']([^"']+)["'][^>]*>[\s\S]*?<\/file>/gi, (match, path) => {
+               return `\n[Generated file: ${path}]\n`;
+           });
+           
+           return (
+             <div key={idx} className="whitespace-pre-wrap">
+               {cleanText}
+               {isStreaming && idx === parts.length - 1 && (
+                 <span className="inline-block w-1.5 h-4 bg-blue-500 ml-0.5 animate-pulse align-middle"></span>
+               )}
              </div>
-           </details>
-        )}
-        <div className="whitespace-pre-wrap">{cleanContent}</div>
+           );
+        })}
       </div>
     );
   };
@@ -122,61 +153,57 @@ const ChatInterface: React.FC<ChatInterfaceProps> = ({ messages, isLoading, onSe
           </div>
         )}
         
-        {messages.map((msg) => (
-          <div key={msg.id} className="flex gap-4 group">
-             {/* Avatar/Icon */}
-             <div className="w-8 h-8 rounded-full flex-shrink-0 bg-[#2a2a2a] flex items-center justify-center text-xs font-bold text-gray-400 border border-[#333]">
-                {msg.role === 'user' ? 'U' : 'AI'}
-             </div>
+        {messages.map((msg, index) => {
+          const isLastMessage = index === messages.length - 1;
+          const isModelStreaming = msg.role === 'model' && isLastMessage && isLoading;
 
-             <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                   <span className="text-xs font-semibold text-gray-400">{msg.role === 'user' ? 'You' : 'Gemini'}</span>
-                   <span className="text-[10px] text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
-                </div>
+          return (
+            <div key={msg.id} className="flex gap-4 group">
+               {/* Avatar/Icon */}
+               <div className="w-8 h-8 rounded-full flex-shrink-0 bg-[#2a2a2a] flex items-center justify-center text-xs font-bold text-gray-400 border border-[#333]">
+                  {msg.role === 'user' ? 'U' : 'AI'}
+               </div>
 
-                {msg.role === 'user' && msg.images && msg.images.length > 0 && (
-                  <div className="flex gap-2 mb-2">
-                    {msg.images.map((img, i) => (
-                      <img key={i} src={img} alt="upload" className="w-24 h-24 object-cover rounded-md border border-gray-700" />
-                    ))}
+               <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                     <span className="text-xs font-semibold text-gray-400">{msg.role === 'user' ? 'You' : 'Gemini'}</span>
+                     <span className="text-[10px] text-gray-600">{new Date(msg.timestamp).toLocaleTimeString()}</span>
                   </div>
-                )}
 
-                <div className="text-sm">
-                   {renderContent(msg.text)}
-                </div>
-                
-                {msg.groundingMetadata && msg.groundingMetadata.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
-                     {msg.groundingMetadata.map((g, idx) => (
-                       <a key={idx} href={g.url} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1 bg-[#1e1e1e] px-2 py-1 rounded-full text-blue-400 hover:text-blue-300 border border-[#333]">
-                         <span className="truncate max-w-[150px]">{g.title}</span>
-                       </a>
-                     ))}
+                  {msg.role === 'user' && msg.images && msg.images.length > 0 && (
+                    <div className="flex gap-2 mb-2">
+                      {msg.images.map((img, i) => (
+                        <img key={i} src={img} alt="upload" className="w-24 h-24 object-cover rounded-md border border-gray-700" />
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="text-sm">
+                     {renderContent(msg.text, isModelStreaming)}
                   </div>
-                )}
-                
-                {/* Actions (Hover) */}
-                {msg.role === 'model' && (
-                  <div className="flex items-center gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500">
-                     {msg.thinkingTime && <span>{(msg.thinkingTime / 1000).toFixed(1)}s</span>}
-                     <button className="hover:text-white flex items-center gap-1"><RefreshCw size={10}/> Retry</button>
-                     <button className="hover:text-white flex items-center gap-1"><Pencil size={10}/> Edit</button>
-                  </div>
-                )}
-             </div>
-          </div>
-        ))}
-        
-        {isLoading && (
-          <div className="flex gap-4">
-             <div className="w-8 h-8 rounded-full bg-[#2a2a2a] flex items-center justify-center border border-[#333]">
-                <div className="w-4 h-4 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
-             </div>
-             <div className="flex items-center text-sm text-gray-500">Thinking...</div>
-          </div>
-        )}
+                  
+                  {msg.groundingMetadata && msg.groundingMetadata.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                       {msg.groundingMetadata.map((g, idx) => (
+                         <a key={idx} href={g.url} target="_blank" rel="noreferrer" className="text-xs flex items-center gap-1 bg-[#1e1e1e] px-2 py-1 rounded-full text-blue-400 hover:text-blue-300 border border-[#333]">
+                           <span className="truncate max-w-[150px]">{g.title}</span>
+                         </a>
+                       ))}
+                    </div>
+                  )}
+                  
+                  {/* Actions (Hover) */}
+                  {msg.role === 'model' && !isModelStreaming && (
+                    <div className="flex items-center gap-3 mt-2 opacity-0 group-hover:opacity-100 transition-opacity text-xs text-gray-500">
+                       {msg.thinkingTime && <span>{(msg.thinkingTime / 1000).toFixed(1)}s</span>}
+                       <button className="hover:text-white flex items-center gap-1"><RefreshCw size={10}/> Retry</button>
+                       <button className="hover:text-white flex items-center gap-1"><Pencil size={10}/> Edit</button>
+                    </div>
+                  )}
+               </div>
+            </div>
+          );
+        })}
         <div ref={bottomRef} />
       </div>
 

@@ -1,10 +1,10 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileData, ChatMessage, Settings, CanvasNode, CanvasEdge,
   DEFAULT_SYSTEM_INSTRUCTION 
 } from './types';
 import { INITIAL_FILES, GEMINI_MODELS } from './constants';
-import { generateResponse } from './services/geminiService';
+import { streamResponse } from './services/geminiService';
 
 // Components
 import ChatInterface from './components/ChatInterface';
@@ -17,8 +17,8 @@ import NodeDetails from './components/NodeDetails';
 
 import { 
   Settings as SettingsIcon, Play, 
-  MessageSquare, Plus, ChevronLeft, ChevronRight, 
-  Code2, Eye, GitGraph, Box, LayoutPanelLeft, Download, Trash2
+  MessageSquare, Plus, 
+  Code2, Eye, GitGraph, Box, Download, Trash2
 } from 'lucide-react';
 import JSZip from 'jszip';
 
@@ -68,58 +68,6 @@ const App: React.FC = () => {
 
   // --- LOGIC ---
 
-  const parseAndApplyFiles = (text: string) => {
-    // Regex to find <file path="...">...</file> blocks
-    const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
-    let match;
-    const newFiles: FileData[] = [];
-    
-    // We update existing files or add new ones
-    // We clone current files map
-    const fileMap = new Map(files.map(f => [f.path, f]));
-
-    while ((match = fileRegex.exec(text)) !== null) {
-      const path = match[1];
-      const content = match[2].trim();
-      const language = path.split('.').pop() || 'text';
-      
-      const newFile = { path, content, language };
-      fileMap.set(path, newFile);
-      newFiles.push(newFile);
-
-      // Create a node for this file update
-      const fileNodeId = `file-${Date.now()}-${path}`;
-      setNodes(prev => {
-        const lastNode = prev[prev.length - 1];
-        const newX = lastNode ? lastNode.x + 250 : 50;
-        const newY = lastNode ? lastNode.y : 50;
-
-        const newNode: CanvasNode = {
-           id: fileNodeId,
-           type: 'file',
-           x: newX,
-           y: newY,
-           data: { label: path, details: content }
-        };
-
-        // Edge from last model node to this file
-        // This is a simplification. Ideally we track parent ID.
-        return [...prev, newNode];
-      });
-      
-      // We need to add edges in a separate step or track the 'source' node better. 
-      // For this replica, visual approximation is acceptable.
-    }
-
-    if (newFiles.length > 0) {
-      setFiles(Array.from(fileMap.values()));
-      // Auto switch to first generated file if none selected or if readme
-      if (newFiles.length > 0) {
-        setSelectedFilePath(newFiles[0].path);
-      }
-    }
-  };
-
   const handleSendMessage = async (text: string, images: string[]) => {
     const userMsgId = Date.now().toString();
     const newUserMsg: ChatMessage = {
@@ -133,33 +81,57 @@ const App: React.FC = () => {
     setMessages(prev => [...prev, newUserMsg]);
     setIsLoading(true);
 
-    // Calculate position for new nodes
-    // Simple layout: User nodes on left, Model nodes on right, progressing downwards
-    const lastY = nodes.length > 0 ? nodes[nodes.length - 1].y : 0;
-    const newY = lastY + 120;
+    // --- CANVAS LAYOUT LOGIC ---
+    // Simple vertical stacking with horizontal branching for Model vs User
+    // Find the lowest Y currently
+    const maxY = nodes.length > 0 ? Math.max(...nodes.map(n => n.y)) : 0;
+    const startY = nodes.length > 0 ? maxY + 150 : 50;
 
     // Add User Node
     const userNode: CanvasNode = {
        id: `msg-${userMsgId}`,
        type: 'user',
-       x: 50,
-       y: newY,
+       x: 50, // User on left
+       y: startY,
        data: { label: 'User Input', details: text }
     };
-    setNodes(prev => [...prev, userNode]);
+    
+    // Create Placeholder Model Node immediately
+    const aiMsgId = (Date.now() + 1).toString();
+    const modelNode: CanvasNode = {
+        id: `msg-${aiMsgId}`,
+        type: 'model',
+        x: 300, // Model in middle
+        y: startY, 
+        data: { label: 'Model Response', details: 'Thinking...' }
+    };
 
-    // Link from previous model node if exists
-    // (Skipped for simplicity, usually you link strictly)
+    setNodes(prev => [...prev, userNode, modelNode]);
+    setEdges(prev => [...prev, {
+        id: `e-${userMsgId}-${aiMsgId}`,
+        source: userNode.id,
+        target: modelNode.id
+    }]);
+
+    // Initial placeholder message for streaming
+    const aiMsgPlaceholder: ChatMessage = {
+        id: aiMsgId,
+        role: 'model',
+        text: '',
+        timestamp: Date.now(),
+        thinkingTime: 0
+    };
+    setMessages(prev => [...prev, aiMsgPlaceholder]);
 
     try {
       const startTime = Date.now();
       
       const historyForApi = messages.map(m => ({
           role: m.role,
-          parts: [{ text: m.text }] // Simplified history
+          parts: [{ text: m.text }] 
       }));
 
-      const { text: responseText, groundingMetadata } = await generateResponse(
+      const stream = streamResponse(
         text,
         images,
         files,
@@ -167,49 +139,70 @@ const App: React.FC = () => {
         historyForApi
       );
 
+      let fullText = "";
+      let groundingMetadata: any[] = [];
+
+      for await (const chunk of stream) {
+          const chunkText = chunk.text || "";
+          fullText += chunkText;
+          
+          // Accumulate grounding metadata if available
+          const chunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
+          if (chunks) {
+            chunks.forEach((c: any) => {
+                if (c.web?.uri) {
+                    groundingMetadata.push({ url: c.web.uri, title: c.web.title || c.web.uri });
+                }
+            });
+          }
+
+          // Update Message UI
+          setMessages(prev => prev.map(msg => 
+             msg.id === aiMsgId 
+               ? { ...msg, text: fullText, groundingMetadata: groundingMetadata.length ? groundingMetadata : undefined } 
+               : msg
+          ));
+
+          // Update Canvas Node UI
+          setNodes(prev => prev.map(n => 
+             n.id === modelNode.id
+               ? { ...n, data: { ...n.data, details: fullText } }
+               : n
+          ));
+      }
+
       const endTime = Date.now();
       
-      // Add Model Node
-      const aiMsgId = (Date.now() + 1).toString();
-      const modelNode: CanvasNode = {
-        id: `msg-${aiMsgId}`,
-        type: 'model',
-        x: 350,
-        y: newY, 
-        data: { label: 'Model Response', details: responseText }
-      };
-      setNodes(prev => [...prev, modelNode]);
+      // Final update with thinking time
+      setMessages(prev => prev.map(msg => 
+        msg.id === aiMsgId ? { ...msg, thinkingTime: endTime - startTime } : msg
+      ));
 
-      // Add Edge User -> Model
-      setEdges(prev => [...prev, {
-        id: `e-${userMsgId}-${aiMsgId}`,
-        source: userNode.id,
-        target: modelNode.id
-      }]);
-
-      if (settings.enableSearch && groundingMetadata.length > 0) {
+      // --- POST PROCESSING (Files & Tools) ---
+      
+      // 1. Tool Nodes (Search)
+      if (groundingMetadata.length > 0) {
           const toolNode: CanvasNode = {
               id: `tool-${aiMsgId}`,
               type: 'tool',
-              x: 350,
-              y: newY + 120, // below model node
+              x: 300,
+              y: startY + 120, 
               data: { label: 'Google Search', details: JSON.stringify(groundingMetadata)}
           };
           setNodes(prev => [...prev, toolNode]);
           setEdges(prev => [...prev, { id: `e-${aiMsgId}-tool`, source: modelNode.id, target: toolNode.id }]);
       }
 
-      // Parse for files (this will add file nodes inside the function logic ideally, 
-      // but for cleaner state we might need to refactor. 
-      // For now, let's just parse files and manually add file nodes here for better graph layout control)
-      
-      const fileRegex = /<file\s+path="([^"]+)">([\s\S]*?)<\/file>/g;
+      // 2. File Parsing & Nodes
+      // Improved regex to handle attributes loosely
+      const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi;
       let match;
       let fileOffset = 0;
       const fileUpdates: FileData[] = [];
+      // Clone current files
       const currentFilesMap = new Map(files.map(f => [f.path, f]));
 
-      while ((match = fileRegex.exec(responseText)) !== null) {
+      while ((match = fileRegex.exec(fullText)) !== null) {
           const path = match[1];
           const content = match[2].trim();
           const language = path.split('.').pop() || 'text';
@@ -220,8 +213,8 @@ const App: React.FC = () => {
           const fileNode: CanvasNode = {
             id: `file-${aiMsgId}-${fileOffset}`,
             type: 'file',
-            x: 650,
-            y: newY + (fileOffset * 100),
+            x: 550, // Files on right
+            y: startY + (fileOffset * 100),
             data: { label: path, details: content }
           };
           setNodes(prev => [...prev, fileNode]);
@@ -235,25 +228,16 @@ const App: React.FC = () => {
 
       if (fileUpdates.length > 0) {
           setFiles(Array.from(currentFilesMap.values()));
+          // Automatically switch to the first modified file
           setSelectedFilePath(fileUpdates[0].path);
       }
-      
-      const newAiMsg: ChatMessage = {
-        id: aiMsgId,
-        role: 'model',
-        text: responseText,
-        timestamp: Date.now(),
-        thinkingTime: endTime - startTime,
-        groundingMetadata
-      };
-      setMessages(prev => [...prev, newAiMsg]);
 
     } catch (error) {
       console.error(error);
       const errorMsg: ChatMessage = {
         id: Date.now().toString(),
         role: 'model',
-        text: "Error generating response. Please check your API Key and try again.",
+        text: "Error generating response. Please check your network or API Key.",
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, errorMsg]);
