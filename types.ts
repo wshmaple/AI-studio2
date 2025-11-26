@@ -1,3 +1,4 @@
+
 export interface FileData {
   path: string;
   content: string;
@@ -46,6 +47,14 @@ export interface CanvasEdge {
   id: string;
   source: string;
   target: string;
+}
+
+export interface LibraryItem {
+  id: string;
+  title: string;
+  date: string;
+  messages: ChatMessage[];
+  files: FileData[];
 }
 
 export enum ViewMode {

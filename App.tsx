@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileData, ChatMessage, Settings, CanvasNode, CanvasEdge,
-  DEFAULT_SYSTEM_INSTRUCTION 
+  DEFAULT_SYSTEM_INSTRUCTION, LibraryItem
 } from './types';
-import { INITIAL_FILES, GEMINI_MODELS } from './constants';
+import { INITIAL_FILES, GEMINI_MODELS, SAMPLE_LIBRARY_ITEMS } from './constants';
 import { streamResponse } from './services/geminiService';
 
 // Components
@@ -18,17 +19,17 @@ import NodeDetails from './components/NodeDetails';
 import { 
   Settings as SettingsIcon, Play, 
   MessageSquare, Plus, 
-  Code2, Eye, GitGraph, Box, Download, Trash2
+  Code2, Eye, GitGraph, Box, Download, Trash2, X as CloseIcon
 } from 'lucide-react';
 import JSZip from 'jszip';
 
 // Right Panel Modes
-type RightPanelMode = 'WORKSPACE' | 'GRAPH';
+type RightPanelMode = 'WORKSPACE' | 'GRAPH' | null;
 
 const App: React.FC = () => {
   // --- STATE ---
   const [files, setFiles] = useState<FileData[]>(INITIAL_FILES);
-  const [selectedFilePath, setSelectedFilePath] = useState<string | null>('readme.md');
+  const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [settings, setSettings] = useState<Settings>({
     model: GEMINI_MODELS[0].value,
@@ -40,7 +41,8 @@ const App: React.FC = () => {
     enableSearch: false,
   });
   
-  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>('WORKSPACE');
+  // Default is hidden (null)
+  const [rightPanelMode, setRightPanelMode] = useState<RightPanelMode>(null);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   
@@ -56,7 +58,13 @@ const App: React.FC = () => {
   useEffect(() => {
     const savedFiles = localStorage.getItem('ai-studio-files');
     const savedMsgs = localStorage.getItem('ai-studio-messages');
-    if (savedFiles) setFiles(JSON.parse(savedFiles));
+    if (savedFiles) {
+        const parsedFiles = JSON.parse(savedFiles);
+        setFiles(parsedFiles);
+        if (parsedFiles.length > 0) {
+            setSelectedFilePath(parsedFiles[0].path);
+        }
+    }
     if (savedMsgs) setMessages(JSON.parse(savedMsgs));
   }, []);
 
@@ -82,20 +90,17 @@ const App: React.FC = () => {
     setIsLoading(true);
 
     // --- SMART CANVAS LAYOUT LOGIC ---
-    // Calculate positions based on previous nodes to prevent overlap
     const NODE_SPACING_Y = 180;
     const COLUMN_USER = 50;
     const COLUMN_MODEL = 350;
     const COLUMN_ARTIFACTS = 650;
 
-    // Find the bottom-most Y position to start the new interaction turn
     let startY = 50;
     if (nodes.length > 0) {
         const maxY = Math.max(...nodes.map(n => n.y));
         startY = maxY + NODE_SPACING_Y;
     }
 
-    // 1. Add User Node
     const userNode: CanvasNode = {
        id: `msg-${userMsgId}`,
        type: 'user',
@@ -104,7 +109,6 @@ const App: React.FC = () => {
        data: { label: 'User Prompt', details: text }
     };
     
-    // 2. Add Model Node (Placeholder)
     const aiMsgId = (Date.now() + 1).toString();
     const modelNode: CanvasNode = {
         id: `msg-${aiMsgId}`,
@@ -121,7 +125,6 @@ const App: React.FC = () => {
         target: modelNode.id
     }]);
 
-    // Connect to previous interaction if exists (visual flow continuity)
     const lastModelNode = [...nodes].reverse().find(n => n.type === 'model');
     if (lastModelNode) {
         setEdges(prev => [...prev, {
@@ -131,7 +134,6 @@ const App: React.FC = () => {
         }]);
     }
 
-    // Initial placeholder message for streaming
     const aiMsgPlaceholder: ChatMessage = {
         id: aiMsgId,
         role: 'model',
@@ -143,7 +145,6 @@ const App: React.FC = () => {
 
     try {
       const startTime = Date.now();
-      
       const historyForApi = messages.map(m => ({
           role: m.role,
           parts: [{ text: m.text }] 
@@ -164,7 +165,6 @@ const App: React.FC = () => {
           const chunkText = chunk.text || "";
           fullText += chunkText;
           
-          // Accumulate grounding metadata if available
           const chunks = chunk.candidates?.[0]?.groundingMetadata?.groundingChunks;
           if (chunks) {
             chunks.forEach((c: any) => {
@@ -174,14 +174,12 @@ const App: React.FC = () => {
             });
           }
 
-          // Update Message UI (Streaming)
           setMessages(prev => prev.map(msg => 
              msg.id === aiMsgId 
                ? { ...msg, text: fullText, groundingMetadata: groundingMetadata.length ? groundingMetadata : undefined } 
                : msg
           ));
 
-          // Update Canvas Node UI (Streaming)
           setNodes(prev => prev.map(n => 
              n.id === modelNode.id
                ? { ...n, data: { ...n.data, details: fullText } }
@@ -190,16 +188,12 @@ const App: React.FC = () => {
       }
 
       const endTime = Date.now();
-      
-      // Final update with thinking time
       setMessages(prev => prev.map(msg => 
         msg.id === aiMsgId ? { ...msg, thinkingTime: endTime - startTime } : msg
       ));
 
-      // --- POST PROCESSING (Files & Tools) ---
       let artifactOffsetY = 0;
       
-      // 1. Tool Nodes (Search)
       if (groundingMetadata.length > 0) {
           const toolNode: CanvasNode = {
               id: `tool-${aiMsgId}`,
@@ -213,7 +207,6 @@ const App: React.FC = () => {
           artifactOffsetY++;
       }
 
-      // 2. File Parsing & Nodes
       const fileRegex = /<file\s+path=["']([^"']+)["'][^>]*>([\s\S]*?)<\/file>/gi;
       let match;
       const fileUpdates: FileData[] = [];
@@ -231,7 +224,7 @@ const App: React.FC = () => {
             id: `file-${aiMsgId}-${artifactOffsetY}`,
             type: 'file',
             x: COLUMN_ARTIFACTS,
-            y: startY + (artifactOffsetY * 120), // More spacing for files
+            y: startY + (artifactOffsetY * 120),
             data: { label: path, details: content }
           };
           setNodes(prev => [...prev, fileNode]);
@@ -246,6 +239,10 @@ const App: React.FC = () => {
       if (fileUpdates.length > 0) {
           setFiles(Array.from(currentFilesMap.values()));
           setSelectedFilePath(fileUpdates[0].path);
+          // Auto open workspace if files are generated
+          if (rightPanelMode !== 'GRAPH') {
+            setRightPanelMode('WORKSPACE');
+          }
       }
 
     } catch (error) {
@@ -281,20 +278,44 @@ const App: React.FC = () => {
     URL.revokeObjectURL(url);
   };
 
+  const handleLoadLibraryItem = (item: LibraryItem) => {
+    setMessages(item.messages);
+    setFiles(item.files);
+    if (item.files.length > 0) {
+       setSelectedFilePath(item.files[0].path);
+       setRightPanelMode('WORKSPACE');
+    } else {
+       setSelectedFilePath(null);
+       setRightPanelMode(null);
+    }
+  };
+
+  const handleCreateNew = () => {
+     setMessages([]);
+     setFiles([]);
+     setSelectedFilePath(null);
+     setNodes([]);
+     setEdges([]);
+     setRightPanelMode(null);
+  };
+
   const selectedFileContent = files.find(f => f.path === selectedFilePath);
 
   return (
     <div className="flex h-screen w-screen bg-[#0b0f13] text-[#e0e0e0] overflow-hidden font-sans">
       
       {/* 1. LEFT SIDEBAR: Library & Navigation */}
-      <div className="w-64 flex-shrink-0 flex flex-col border-r border-[#1e1e1e] bg-[#0b0f13]">
+      <div className="w-60 flex-shrink-0 flex flex-col border-r border-[#1e1e1e] bg-[#0b0f13] hidden md:flex">
         <div className="h-14 flex items-center px-4 gap-2">
            <div className="w-6 h-6 bg-gradient-to-br from-blue-500 to-purple-600 rounded-md"></div>
            <span className="font-semibold text-lg tracking-tight text-white">AI Studio</span>
         </div>
 
         <div className="px-4 py-2">
-          <button className="w-full flex items-center justify-center gap-2 bg-[#1e1e1e] hover:bg-[#2a2a2a] text-blue-400 py-2.5 rounded-full border border-[#333] transition-colors text-sm font-medium">
+          <button 
+            onClick={handleCreateNew}
+            className="w-full flex items-center justify-center gap-2 bg-[#1e1e1e] hover:bg-[#2a2a2a] text-blue-400 py-2.5 rounded-full border border-[#333] transition-colors text-sm font-medium"
+          >
             <Plus size={16} /> Create new
           </button>
         </div>
@@ -302,17 +323,17 @@ const App: React.FC = () => {
         <div className="flex-1 overflow-y-auto py-4 px-2">
           <div className="text-xs font-semibold text-gray-500 px-4 mb-2 tracking-wider">MY LIBRARY</div>
           <div className="space-y-1">
-             {[
-               { title: 'Creative Writing Assistant', time: 'Today' },
-               { title: 'Python Code Generator', time: 'Yesterday' },
-               { title: 'Data Analysis Helper', time: '3 days ago' },
-             ].map((item, i) => (
-               <div key={i} className="px-4 py-2 hover:bg-[#1e1e1e] rounded-lg cursor-pointer group">
+             {SAMPLE_LIBRARY_ITEMS.map((item) => (
+               <div 
+                 key={item.id} 
+                 onClick={() => handleLoadLibraryItem(item)}
+                 className="px-4 py-2 hover:bg-[#1e1e1e] rounded-lg cursor-pointer group"
+               >
                   <div className="flex items-center gap-3">
                     <MessageSquare size={14} className="text-gray-500 group-hover:text-gray-300" />
                     <div className="flex flex-col min-w-0">
                       <span className="text-sm text-gray-300 group-hover:text-white truncate">{item.title}</span>
-                      <span className="text-[10px] text-gray-600">{item.time}</span>
+                      <span className="text-[10px] text-gray-600">{item.date}</span>
                     </div>
                   </div>
                </div>
@@ -326,22 +347,22 @@ const App: React.FC = () => {
       </div>
 
       {/* 2. MIDDLE PANEL: Chat / Prompt Interface */}
-      <div className="flex-1 flex flex-col min-w-[400px] border-r border-[#1e1e1e] bg-[#13161c] relative">
+      <div className="flex-1 flex flex-col min-w-0 border-r border-[#1e1e1e] bg-[#13161c] relative transition-all duration-300">
         {/* Header */}
         <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-6 bg-[#13161c]">
-           <span className="text-sm font-medium text-gray-300">Untitled prompt</span>
+           <span className="text-sm font-medium text-gray-300 truncate mr-4">Untitled prompt</span>
            
-           <div className="flex items-center gap-4">
+           <div className="flex items-center gap-4 flex-shrink-0">
               {/* Top View Toggle */}
               <div className="flex bg-[#1e1e1e] p-0.5 rounded-lg border border-[#333]">
                  <button 
-                   onClick={() => setRightPanelMode('WORKSPACE')}
+                   onClick={() => setRightPanelMode(rightPanelMode === 'WORKSPACE' ? null : 'WORKSPACE')}
                    className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-2 transition-all ${rightPanelMode === 'WORKSPACE' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
                  >
                     <Box size={14} /> Project
                  </button>
                  <button 
-                   onClick={() => setRightPanelMode('GRAPH')}
+                   onClick={() => setRightPanelMode(rightPanelMode === 'GRAPH' ? null : 'GRAPH')}
                    className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-2 transition-all ${rightPanelMode === 'GRAPH' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
                  >
                     <GitGraph size={14} /> Graph
@@ -354,14 +375,17 @@ const App: React.FC = () => {
                  <SettingsIcon size={18} />
               </button>
 
-              <button className="flex items-center gap-2 bg-[#2a2d35] hover:bg-[#374151] text-blue-400 px-4 py-1.5 rounded-full text-xs font-medium transition-colors border border-[#333]">
+              <button 
+                 onClick={() => handleSendMessage(messages[messages.length-1]?.text || "Run", [])}
+                 className="flex items-center gap-2 bg-[#2a2d35] hover:bg-[#374151] text-blue-400 px-4 py-1.5 rounded-full text-xs font-medium transition-colors border border-[#333]"
+              >
                  <Play size={14} fill="currentColor" /> Run
               </button>
            </div>
         </div>
 
         {/* Content */}
-        <div className="flex-1 relative">
+        <div className="flex-1 relative min-h-0">
            <ChatInterface 
              messages={messages} 
              isLoading={isLoading} 
@@ -379,111 +403,135 @@ const App: React.FC = () => {
       </div>
 
       {/* 3. RIGHT PANEL: Project Workspace / Graph */}
-      {rightPanelMode === 'GRAPH' ? (
-        <div className="w-[45%] bg-[#0b0f13] flex flex-col relative overflow-hidden">
-           <div className="h-14 border-b border-[#1e1e1e] flex items-center px-4 bg-[#0b0f13]">
-              <span className="font-semibold text-sm">Agent Execution Graph</span>
+      {rightPanelMode && (
+        <div className="w-[40%] 2xl:w-[45%] flex-shrink-0 bg-[#0b0f13] flex flex-col relative overflow-hidden border-l border-[#1e1e1e]">
+           
+           {/* Header for Close */}
+           <div className="absolute top-0 right-0 z-20 p-2">
+             <button 
+                onClick={() => setRightPanelMode(null)}
+                className="p-1.5 rounded-md hover:bg-[#2a2a2a] text-gray-500 hover:text-white transition-colors"
+             >
+                <CloseIcon size={16} />
+             </button>
            </div>
-           <div className="flex-1 relative">
-             <FlowCanvas 
-                nodes={nodes} 
-                edges={edges} 
-                onNodeClick={(node) => setSelectedNode(node)} 
-             />
-             
-             {/* Node Details Overlay */}
-             {selectedNode && (
-                <NodeDetails 
-                   node={selectedNode} 
-                   onClose={() => setSelectedNode(null)} 
+
+           {rightPanelMode === 'GRAPH' ? (
+            <div className="h-full flex flex-col">
+              <div className="h-14 border-b border-[#1e1e1e] flex items-center px-4 bg-[#0b0f13]">
+                  <span className="font-semibold text-sm">Agent Execution Graph</span>
+              </div>
+              <div className="flex-1 relative">
+                <FlowCanvas 
+                    nodes={nodes} 
+                    edges={edges} 
+                    onNodeClick={(node) => setSelectedNode(node)} 
                 />
-             )}
-           </div>
-        </div>
-      ) : (
-        <div className="w-[45%] flex flex-col bg-[#0b0f13]">
-          {/* Workspace Header */}
-          <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-4 bg-[#0b0f13]">
-            <div className="flex items-center gap-2">
-               <span className="font-semibold text-sm text-gray-200">Project Workspace</span>
-               <span className="bg-[#1e1e1e] text-gray-500 px-2 py-0.5 rounded text-[10px] border border-[#333]">+ {files.length} files</span>
-            </div>
-            <div className="flex gap-2">
-                <button onClick={handleDownload} className="p-1.5 hover:bg-[#1e1e1e] rounded text-gray-400 hover:text-white" title="Download ZIP"><Download size={14} /></button>
-                <button onClick={() => setFiles(INITIAL_FILES)} className="p-1.5 hover:bg-[#1e1e1e] rounded text-gray-400 hover:text-white" title="Reset"><Trash2 size={14} /></button>
-            </div>
-          </div>
-
-          {/* Split Pane: Explorer & Editor */}
-          <div className="flex flex-1 overflow-hidden">
-             
-             {/* Pane 1: File Explorer */}
-             <div className="w-56 border-r border-[#1e1e1e] flex flex-col">
-                <FileExplorer 
-                  files={files} 
-                  selectedFile={selectedFilePath} 
-                  onSelectFile={setSelectedFilePath} 
-                />
-             </div>
-
-             {/* Pane 2: Editor / Preview */}
-             <div className="flex-1 flex flex-col bg-[#1e1e1e] min-w-0">
-                {/* File Tab & Toggles */}
-                {selectedFilePath ? (
-                  <>
-                    <div className="h-10 bg-[#0b0f13] border-b border-[#1e1e1e] flex items-center justify-between pr-2">
-                       {/* Active Tab */}
-                       <div className="flex">
-                          <div className="px-4 py-2.5 bg-[#1e1e1e] border-r border-[#1e1e1e] text-xs text-blue-400 border-t-2 border-t-blue-500 flex items-center gap-2">
-                             {selectedFilePath}
-                          </div>
-                       </div>
-                       
-                       {/* Code/Preview Toggle */}
-                       <div className="flex bg-[#1e1e1e] p-0.5 rounded border border-[#333] scale-90 origin-right">
-                          <button 
-                            onClick={() => setWorkspaceView('code')}
-                            className={`px-3 py-1 rounded text-[10px] font-medium flex items-center gap-1.5 transition-all ${workspaceView === 'code' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-                          >
-                              <Code2 size={12} /> Code
-                          </button>
-                          <button 
-                            onClick={() => setWorkspaceView('preview')}
-                            className={`px-3 py-1 rounded text-[10px] font-medium flex items-center gap-1.5 transition-all ${workspaceView === 'preview' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
-                          >
-                              <Eye size={12} /> Preview
-                          </button>
-                       </div>
-                    </div>
-
-                    {/* Content */}
-                    <div className="flex-1 overflow-hidden relative">
-                       {workspaceView === 'code' ? (
-                          <CodeEditor 
-                            code={selectedFileContent?.content || ''} 
-                            language={selectedFileContent?.language || 'text'} 
-                            onChange={handleUpdateFile} 
-                          />
-                       ) : (
-                          <>
-                            <div className="absolute top-0 left-0 right-0 h-8 bg-gray-100 border-b border-gray-300 flex items-center px-4 text-xs text-gray-500">
-                               Preview Mode
-                               <span className="ml-auto opacity-50">{selectedFilePath}</span>
-                            </div>
-                            <div className="pt-8 h-full">
-                               <PreviewPane files={files} />
-                            </div>
-                          </>
-                       )}
-                    </div>
-                  </>
-                ) : (
-                  <div className="flex-1 flex items-center justify-center text-gray-500 text-sm">
-                    Select a file to view
-                  </div>
+                
+                {selectedNode && (
+                    <NodeDetails 
+                      node={selectedNode} 
+                      onClose={() => setSelectedNode(null)} 
+                    />
                 )}
-             </div>
-          </div>
+              </div>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col">
+              {/* Workspace Header */}
+              <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-4 bg-[#0b0f13] pr-12">
+                <div className="flex items-center gap-2">
+                  <span className="font-semibold text-sm text-gray-200">Project Workspace</span>
+                  <span className="bg-[#1e1e1e] text-gray-500 px-2 py-0.5 rounded text-[10px] border border-[#333]">{files.length} files</span>
+                </div>
+                <div className="flex gap-2">
+                    <button onClick={handleDownload} className="p-1.5 hover:bg-[#1e1e1e] rounded text-gray-400 hover:text-white" title="Download ZIP"><Download size={14} /></button>
+                    <button 
+                      onClick={() => {
+                          setFiles(INITIAL_FILES);
+                          setSelectedFilePath(null);
+                      }} 
+                      className="p-1.5 hover:bg-[#1e1e1e] rounded text-gray-400 hover:text-white" 
+                      title="Reset"
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                </div>
+              </div>
+
+              {/* Split Pane: Explorer & Editor */}
+              <div className="flex flex-1 overflow-hidden">
+                
+                {/* Pane 1: File Explorer */}
+                <div className="w-56 border-r border-[#1e1e1e] flex flex-col flex-shrink-0">
+                    <FileExplorer 
+                      files={files} 
+                      selectedFile={selectedFilePath} 
+                      onSelectFile={setSelectedFilePath} 
+                    />
+                </div>
+
+                {/* Pane 2: Editor / Preview */}
+                <div className="flex-1 flex flex-col bg-[#1e1e1e] min-w-0">
+                    {/* File Tab & Toggles */}
+                    {selectedFilePath ? (
+                      <>
+                        <div className="h-10 bg-[#0b0f13] border-b border-[#1e1e1e] flex items-center justify-between pr-2">
+                          {/* Active Tab */}
+                          <div className="flex overflow-hidden">
+                              <div className="px-4 py-2.5 bg-[#1e1e1e] border-r border-[#1e1e1e] text-xs text-blue-400 border-t-2 border-t-blue-500 flex items-center gap-2 truncate">
+                                {selectedFilePath}
+                              </div>
+                          </div>
+                          
+                          {/* Code/Preview Toggle */}
+                          <div className="flex bg-[#1e1e1e] p-0.5 rounded border border-[#333] scale-90 origin-right flex-shrink-0">
+                              <button 
+                                onClick={() => setWorkspaceView('code')}
+                                className={`px-3 py-1 rounded text-[10px] font-medium flex items-center gap-1.5 transition-all ${workspaceView === 'code' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                              >
+                                  <Code2 size={12} /> Code
+                              </button>
+                              <button 
+                                onClick={() => setWorkspaceView('preview')}
+                                className={`px-3 py-1 rounded text-[10px] font-medium flex items-center gap-1.5 transition-all ${workspaceView === 'preview' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                              >
+                                  <Eye size={12} /> Preview
+                              </button>
+                          </div>
+                        </div>
+
+                        {/* Content */}
+                        <div className="flex-1 overflow-hidden relative">
+                          {workspaceView === 'code' ? (
+                              <CodeEditor 
+                                code={selectedFileContent?.content || ''} 
+                                language={selectedFileContent?.language || 'text'} 
+                                onChange={handleUpdateFile} 
+                              />
+                          ) : (
+                              <>
+                                <div className="absolute top-0 left-0 right-0 h-8 bg-gray-100 border-b border-gray-300 flex items-center px-4 text-xs text-gray-500 z-10">
+                                  Preview Mode
+                                  <span className="ml-auto opacity-50">{selectedFilePath}</span>
+                                </div>
+                                <div className="pt-8 h-full">
+                                  <PreviewPane files={files} />
+                                </div>
+                              </>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="flex-1 flex flex-col items-center justify-center text-gray-500 text-sm p-4 text-center">
+                        <p>No file selected</p>
+                        <p className="text-xs text-gray-600 mt-2">Generate code in the chat to see files here</p>
+                      </div>
+                    )}
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
