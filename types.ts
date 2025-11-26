@@ -30,6 +30,7 @@ export interface Settings {
   maxOutputTokens: number;
   systemInstruction: string;
   enableSearch: boolean;
+  ollamaUrl: string;
 }
 
 export interface CanvasNode {

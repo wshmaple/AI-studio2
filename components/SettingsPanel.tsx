@@ -1,7 +1,8 @@
+
 import React from 'react';
 import { Settings } from '../types';
-import { GEMINI_MODELS } from '../constants';
-import { X, Settings2 } from 'lucide-react';
+import { AVAILABLE_MODELS } from '../constants';
+import { X, Settings2, Link } from 'lucide-react';
 
 interface SettingsPanelProps {
   settings: Settings;
@@ -16,6 +17,9 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate, isOpe
   const handleChange = (key: keyof Settings, value: any) => {
     onUpdate({ ...settings, [key]: value });
   };
+
+  const selectedModelDef = AVAILABLE_MODELS.find(m => m.value === settings.model);
+  const isOllama = selectedModelDef?.provider === 'ollama';
 
   return (
     <div className="absolute top-0 right-0 h-full w-80 bg-[#1e1e1e] border-l border-[#333] shadow-2xl z-50 p-4 overflow-y-auto">
@@ -36,11 +40,34 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate, isOpe
             onChange={(e) => handleChange('model', e.target.value)}
             className="w-full bg-[#2a2a2a] border border-[#444] rounded p-2 text-sm focus:border-blue-500 outline-none"
           >
-            {GEMINI_MODELS.map(m => (
-              <option key={m.value} value={m.value}>{m.label}</option>
-            ))}
+            <optgroup label="Google Gemini">
+                {AVAILABLE_MODELS.filter(m => m.provider === 'google').map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+            </optgroup>
+            <optgroup label="Ollama (Local)">
+                {AVAILABLE_MODELS.filter(m => m.provider === 'ollama').map(m => (
+                    <option key={m.value} value={m.value}>{m.label}</option>
+                ))}
+            </optgroup>
           </select>
         </div>
+        
+        {isOllama && (
+            <div>
+              <label className="block text-sm font-medium mb-2 text-gray-400 flex items-center gap-1">
+                 <Link size={14} /> Ollama URL
+              </label>
+              <input 
+                type="text"
+                value={settings.ollamaUrl}
+                onChange={(e) => handleChange('ollamaUrl', e.target.value)}
+                placeholder="http://localhost:11434"
+                className="w-full bg-[#2a2a2a] border border-[#444] rounded p-2 text-sm focus:border-blue-500 outline-none"
+              />
+              <p className="text-[10px] text-gray-500 mt-1">Ensure Ollama is running with `OLLAMA_ORIGINS="*"` to allow browser access.</p>
+            </div>
+        )}
 
         <div>
           <label className="block text-sm font-medium mb-2 text-gray-400">System Instructions</label>
@@ -91,10 +118,10 @@ const SettingsPanel: React.FC<SettingsPanelProps> = ({ settings, onUpdate, isOpe
           />
         </div>
 
-        <div className="flex items-center justify-between">
+        <div className={`flex items-center justify-between ${isOllama ? 'opacity-50 pointer-events-none' : ''}`}>
           <label className="text-sm font-medium text-gray-400">Google Search</label>
           <div 
-            onClick={() => handleChange('enableSearch', !settings.enableSearch)}
+            onClick={() => !isOllama && handleChange('enableSearch', !settings.enableSearch)}
             className={`w-10 h-5 rounded-full cursor-pointer relative transition-colors ${settings.enableSearch ? 'bg-blue-600' : 'bg-[#444]'}`}
           >
             <div className={`absolute top-1 w-3 h-3 bg-white rounded-full transition-all ${settings.enableSearch ? 'left-6' : 'left-1'}`} />

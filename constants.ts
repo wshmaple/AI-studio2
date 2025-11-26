@@ -1,10 +1,12 @@
 
 import { LibraryItem } from './types';
 
-export const GEMINI_MODELS = [
-  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'gemini-2.5-flash-thinking', label: 'Gemini 2.5 Flash (Thinking)' }, // Simulated alias for prompt logic
-  { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro' },
+export const AVAILABLE_MODELS = [
+  { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', provider: 'google' },
+  { value: 'gemini-2.5-flash-thinking', label: 'Gemini 2.5 Flash (Thinking)', provider: 'google' },
+  { value: 'gemini-3-pro-preview', label: 'Gemini 3 Pro', provider: 'google' },
+  { value: 'deepseek-r1', label: 'DeepSeek R1 (Ollama)', provider: 'ollama' },
+  { value: 'deepseek-coder-v2', label: 'DeepSeek Coder V2 (Ollama)', provider: 'ollama' },
 ];
 
 export const INITIAL_FILES = [];

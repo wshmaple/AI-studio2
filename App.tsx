@@ -4,7 +4,7 @@ import {
   FileData, ChatMessage, Settings, CanvasNode, CanvasEdge,
   DEFAULT_SYSTEM_INSTRUCTION, LibraryItem
 } from './types';
-import { INITIAL_FILES, GEMINI_MODELS, SAMPLE_LIBRARY_ITEMS } from './constants';
+import { INITIAL_FILES, AVAILABLE_MODELS, SAMPLE_LIBRARY_ITEMS } from './constants';
 import { streamResponse } from './services/geminiService';
 
 // Components
@@ -32,13 +32,14 @@ const App: React.FC = () => {
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [settings, setSettings] = useState<Settings>({
-    model: GEMINI_MODELS[0].value,
+    model: AVAILABLE_MODELS[0].value,
     temperature: 0.7,
     topP: 0.95,
     topK: 40,
     maxOutputTokens: 8192,
     systemInstruction: DEFAULT_SYSTEM_INSTRUCTION,
     enableSearch: false,
+    ollamaUrl: 'http://localhost:11434',
   });
   
   // Default is hidden (null)
@@ -241,7 +242,7 @@ const App: React.FC = () => {
       const errorMsg: ChatMessage = {
         id: Date.now().toString(),
         role: 'model',
-        text: "Error generating response. Please check your network or API Key.",
+        text: `Error generating response: ${error instanceof Error ? error.message : 'Unknown error'}`,
         timestamp: Date.now()
       };
       setMessages(prev => [...prev, errorMsg]);

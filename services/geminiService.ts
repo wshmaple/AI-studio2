@@ -1,5 +1,7 @@
+
 import { GoogleGenAI } from "@google/genai";
 import { Settings, FileData } from "../types";
+import { AVAILABLE_MODELS } from "../constants";
 
 // Helper to convert file data to context string
 const buildContextFromFiles = (files: FileData[]): string => {
@@ -12,6 +14,90 @@ const buildContextFromFiles = (files: FileData[]): string => {
   return context;
 };
 
+// Handle Ollama API Calls
+const streamOllamaResponse = async function* (
+  model: string,
+  prompt: string,
+  images: string[],
+  settings: Settings,
+  files: FileData[]
+) {
+  const OLLAMA_URL = settings.ollamaUrl || 'http://localhost:11434';
+  
+  // Build Messages
+  const messages = [];
+
+  // System Instruction
+  if (settings.systemInstruction) {
+      messages.push({ role: 'system', content: settings.systemInstruction });
+  }
+
+  // Construct context with files
+  const fileContext = buildContextFromFiles(files);
+  const fullContent = `${fileContext}\n${prompt}`;
+
+  // User Message
+  messages.push({
+      role: 'user',
+      content: fullContent,
+      images: images.length > 0 ? images.map(i => i.split(',')[1]) : undefined
+  });
+
+  try {
+      const response = await fetch(`${OLLAMA_URL}/api/chat`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+              model: model,
+              messages: messages,
+              stream: true,
+              options: {
+                  temperature: settings.temperature,
+                  top_p: settings.topP,
+                  top_k: settings.topK,
+                  num_predict: settings.maxOutputTokens
+              }
+          })
+      });
+
+      if (!response.ok) {
+          throw new Error(`Ollama Error: ${response.status} ${response.statusText}. Make sure Ollama is running at ${OLLAMA_URL} with CORS allowed.`);
+      }
+      
+      if (!response.body) throw new Error('No response body from Ollama');
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n').filter(line => line.trim() !== '');
+
+          for (const line of lines) {
+              try {
+                  const json = JSON.parse(line);
+                  if (json.message?.content) {
+                      yield {
+                          text: json.message.content,
+                          candidates: [{ groundingMetadata: null }]
+                      };
+                  }
+                  if (json.done) return;
+              } catch (e) {
+                  console.warn("Failed to parse Ollama JSON chunk", e);
+              }
+          }
+      }
+
+  } catch (error) {
+      console.error("Ollama Service Error:", error);
+      throw error;
+  }
+};
+
 export const streamResponse = async function* (
   prompt: string,
   images: string[],
@@ -20,6 +106,16 @@ export const streamResponse = async function* (
   history: { role: string; parts: { text: string }[] }[]
 ) {
   
+  // Check Provider
+  const selectedModelDef = AVAILABLE_MODELS.find(m => m.value === settings.model);
+  const isOllama = selectedModelDef?.provider === 'ollama';
+
+  if (isOllama) {
+      yield* streamOllamaResponse(settings.model, prompt, images, settings, files);
+      return;
+  }
+
+  // --- Google GenAI Logic ---
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   // Construct model name.
