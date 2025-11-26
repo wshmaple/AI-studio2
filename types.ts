@@ -63,6 +63,8 @@ export enum ViewMode {
   CANVAS = 'CANVAS',
 }
 
+export type RightPanelMode = 'WORKSPACE' | 'GRAPH' | 'DOCS' | null;
+
 export const DEFAULT_SYSTEM_INSTRUCTION = `You are an expert AI software engineer and creative assistant.
 When asked to write code, you MUST wrap file contents in a specific XML format:
 <file path="path/to/filename.ext">

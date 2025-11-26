@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   FileData, ChatMessage, Settings, CanvasNode, CanvasEdge,
-  DEFAULT_SYSTEM_INSTRUCTION, LibraryItem
+  DEFAULT_SYSTEM_INSTRUCTION, LibraryItem, RightPanelMode
 } from './types';
 import { INITIAL_FILES, AVAILABLE_MODELS, SAMPLE_LIBRARY_ITEMS } from './constants';
 import { streamResponse } from './services/geminiService';
@@ -14,17 +14,15 @@ import PreviewPane from './components/PreviewPane';
 import FlowCanvas from './components/FlowCanvas';
 import SettingsPanel from './components/SettingsPanel';
 import NodeDetails from './components/NodeDetails';
+import DocumentEditor from './components/DocumentEditor';
 
 import { 
   Settings as SettingsIcon, Play, 
   MessageSquare, Plus, 
   Code2, Eye, GitGraph, Box, Download, Trash2, X as CloseIcon,
-  PanelLeft
+  PanelLeft, FileText
 } from 'lucide-react';
 import JSZip from 'jszip';
-
-// Right Panel Modes
-type RightPanelMode = 'WORKSPACE' | 'GRAPH' | null;
 
 const App: React.FC = () => {
   // --- STATE ---
@@ -467,6 +465,30 @@ const App: React.FC = () => {
      setRightPanelMode(null);
   };
 
+  // --- AI DOC ACTIONS ---
+  const handleAiDocAction = async (text: string, operation: 'optimize' | 'fix' | 'expand' | 'shorten') => {
+      const prompts = {
+          optimize: "Rewrite the following text to be more professional, concise, and clear:",
+          fix: "Fix grammar and spelling errors in the following text, keeping the tone unchanged:",
+          expand: "Expand upon the following text with more detail and depth:",
+          shorten: "Summarize the following text concisely:"
+      };
+
+      const prompt = `${prompts[operation]}\n\n"${text}"\n\nReturn ONLY the modified text, without quotes or preamble.`;
+      
+      let result = "";
+      try {
+          const stream = streamResponse(prompt, [], [], settings, []);
+          for await (const chunk of stream) {
+              if (chunk.text) result += chunk.text;
+          }
+      } catch (e) {
+          console.error("Doc transform error", e);
+          result = text; // Fallback
+      }
+      return result.trim();
+  };
+
   const selectedFileContent = files.find(f => f.path === selectedFilePath);
 
   return (
@@ -544,6 +566,12 @@ const App: React.FC = () => {
                  >
                     <GitGraph size={14} /> Graph
                  </button>
+                 <button 
+                   onClick={() => setRightPanelMode(rightPanelMode === 'DOCS' ? null : 'DOCS')}
+                   className={`px-3 py-1.5 rounded-md text-xs font-medium flex items-center gap-2 transition-all ${rightPanelMode === 'DOCS' ? 'bg-[#2a2d35] text-white shadow-sm' : 'text-gray-400 hover:text-gray-200'}`}
+                 >
+                    <FileText size={14} /> Docs
+                 </button>
               </div>
 
               <div className="h-6 w-px bg-[#333]"></div>
@@ -581,7 +609,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {/* 3. RIGHT PANEL: Project Workspace / Graph */}
+      {/* 3. RIGHT PANEL: Project Workspace / Graph / Docs */}
       {rightPanelMode && (
         <div className="w-[40%] 2xl:w-[45%] flex-shrink-0 bg-[#0b0f13] flex flex-col relative overflow-hidden border-l border-[#1e1e1e]">
            
@@ -595,7 +623,7 @@ const App: React.FC = () => {
              </button>
            </div>
 
-           {rightPanelMode === 'GRAPH' ? (
+           {rightPanelMode === 'GRAPH' && (
             <div className="h-full flex flex-col">
               <div className="h-14 border-b border-[#1e1e1e] flex items-center px-4 bg-[#0b0f13]">
                   <span className="font-semibold text-sm">Agent Execution Graph</span>
@@ -616,7 +644,15 @@ const App: React.FC = () => {
                 )}
               </div>
             </div>
-          ) : (
+          )}
+
+          {rightPanelMode === 'DOCS' && (
+             <div className="h-full flex flex-col bg-[#13161c]">
+                 <DocumentEditor onAiTransform={handleAiDocAction} />
+             </div>
+          )}
+
+          {rightPanelMode === 'WORKSPACE' && (
             <div className="h-full flex flex-col">
               {/* Workspace Header */}
               <div className="h-14 border-b border-[#1e1e1e] flex items-center justify-between px-4 bg-[#0b0f13] pr-12">
