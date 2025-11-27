@@ -466,15 +466,20 @@ const App: React.FC = () => {
   };
 
   // --- AI DOC ACTIONS ---
-  const handleAiDocAction = async (text: string, operation: 'optimize' | 'fix' | 'expand' | 'shorten') => {
-      const prompts = {
+  const handleAiDocAction = async (text: string, operation: string, customPrompt?: string) => {
+      const prompts: Record<string, string> = {
           optimize: "Rewrite the following text to be more professional, concise, and clear:",
           fix: "Fix grammar and spelling errors in the following text, keeping the tone unchanged:",
           expand: "Expand upon the following text with more detail and depth:",
-          shorten: "Summarize the following text concisely:"
+          shorten: "Summarize the following text concisely:",
+          tone_professional: "Rewrite the following text to sound more professional, formal, and business-appropriate:",
+          tone_casual: "Rewrite the following text to sound casual, relaxed, and conversational:",
+          tone_friendly: "Rewrite the following text to sound friendly, warm, and approachable:",
+          custom: customPrompt || "Follow this instruction:"
       };
 
-      const prompt = `${prompts[operation]}\n\n"${text}"\n\nReturn ONLY the modified text, without quotes or preamble.`;
+      const basePrompt = prompts[operation] || prompts.custom;
+      const prompt = `${basePrompt}\n\n"${text}"\n\nReturn ONLY the modified text, without quotes or preamble.`;
       
       let result = "";
       try {
